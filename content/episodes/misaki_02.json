@@ -1,0 +1,581 @@
+{
+  "id": "misaki_02",
+  "character": "misaki",
+  "tier": "advanced",
+  "pairing": "any",
+  "requires": "misaki_01",
+  "guess": "gap",
+  "gap_guess": {
+    "question": "ミサキのギャップは？",
+    "options": [
+      { "id": "a", "text": "チームをまとめる話になると、気持ちより答えがほしくなる", "correct": true },
+      { "id": "b", "text": "後輩の前では、急にリードしたくなる" },
+      { "id": "c", "text": "お金の話になると、言葉どおりになる" },
+      { "id": "d", "text": "家族の話になると、距離をとりたくなる" }
+    ]
+  },
+  "title": "異動の話",
+  "intro": "職場の同期のミサキ。金曜の夜に話を聞いてから2週間。\n日曜の夜、ミサキからメッセージが届いた。",
+  "history": {
+    "label": "2週間前",
+    "messages": [
+      { "from": "partner", "text": "ほんとありがとう！" },
+      { "from": "partner", "text": "今度ランチおごるね🍝✨" },
+      { "from": "player", "text": "やった、楽しみにしてる！" }
+    ]
+  },
+  "exit": [
+    { "who": "misaki", "text": "ごめん、ちょっと疲れちゃった", "face": "sad", "delay": "long" },
+    { "who": "misaki", "text": "また今度話すね", "face": "forced_smile" }
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "label": "日曜の夜・メッセージ",
+      "mode": "chat",
+      "steps": [
+        {
+          "id": 1,
+          "mode": "chat",
+          "phase": "early",
+          "scene": "bid",
+          "partner": ["おつかれ〜", "明日のランチ、約束どおりおごらせて🍝", "ちょっと話したいこともあるし。"],
+          "cues": [
+            { "axis": "C", "line": "ちょっと話したいこともあるし。", "text": "「話したいこと」の中身を言わず、「。」で終わっている" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "text": "やった！楽しみにしてる。話も聞かせてね",
+              "grade": "best",
+              "reaction": [{ "text": "うん！" }],
+              "note": "誘いを喜びつつ、「話したいこと」も受け止める合図を返している"
+            },
+            {
+              "id": "b",
+              "text": "話したいことって何？今聞くよ",
+              "grade": "weak",
+              "reaction": [{ "text": "…明日話すね笑" }],
+              "note": "聞く姿勢はいいが、会って話したい相手を急かしている",
+              "leans": { "C": "literal" }
+            },
+            {
+              "id": "c",
+              "text": "おごりとかいいって！普通に行こ",
+              "grade": "good",
+              "reaction": [{ "text": "えー、おごらせてよ笑" }],
+              "note": "遠慮のつもりでも、お礼をしたい気持ちを受け取っていない"
+            },
+            {
+              "id": "d",
+              "text": "了解",
+              "grade": "weak",
+              "reaction": [{ "text": "うん。", "delay": "long" }],
+              "note": "そっけない返事は、近づきたい相手を不安にさせる",
+              "leans": { "A": "far" }
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "mode": "chat",
+          "phase": "early",
+          "scene": "bid",
+          "partner": ["実はさ、来月から異動になるかも", "まあ、どこでも頑張るけどね笑"],
+          "partner_after_miss": ["…実はさ、来月から異動になるかも", "まあ、どこでも頑張るけど"],
+          "cues": [
+            { "axis": "C", "line": "まあ、どこでも頑張るけどね笑", "text": "不安を「笑」でごまかしている" }
+          ],
+          "cues_after_miss": [
+            { "axis": "C", "line": "まあ、どこでも頑張るけど", "text": "「頑張る」と言いながら、いつもの絵文字も「笑」もない" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "text": "えっ、急だね…。明日ゆっくり聞かせて",
+              "grade": "best",
+              "reaction": [{ "text": "うん、ありがと" }],
+              "note": "驚きと気づかいを返しつつ、会って話したい相手のペースに合わせている"
+            },
+            {
+              "id": "b",
+              "text": "いいじゃん！新しい環境、楽しそう！",
+              "grade": "weak",
+              "reaction": [{ "text": "…だよね笑" }],
+              "note": "前向きに励ますつもりでも、「笑」の裏の不安を見落としている"
+            },
+            {
+              "id": "c",
+              "text": "どこに異動？何の仕事？",
+              "grade": "good",
+              "reaction": [{ "text": "新しいチームのまとめ役、みたい" }],
+              "note": "関心は伝わるが、まず気持ちに一言あると◎",
+              "leans": { "B": "answer" }
+            },
+            {
+              "id": "d",
+              "text": "頑張るなら大丈夫だね！",
+              "grade": "bad",
+              "reaction": [{ "text": "…うん。", "delay": "long" }],
+              "note": "察して型への典型的なミス。「頑張るけどね笑」は「本当は不安」のサイン",
+              "leans": { "C": "literal" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "label": "月曜の昼・駅前のパスタ屋",
+      "mode": "face",
+      "background": "pasta_shop",
+      "opening": [
+        { "who": "narration", "text": "月曜の昼。駅前のパスタ屋。" },
+        { "who": "misaki", "text": "来てくれてありがと〜！", "face": "smile" }
+      ],
+      "opening_if_rough": [
+        { "who": "narration", "text": "月曜の昼。駅前のパスタ屋。" },
+        { "who": "misaki", "text": "あ、おつかれ", "face": "forced_smile" }
+      ],
+      "steps": [
+        {
+          "id": 3,
+          "mode": "face",
+          "phase": "main",
+          "scene": "third_party",
+          "partner": [
+            { "who": "misaki", "text": "ここのカルボナーラ、ほんとおいしいんだよ〜", "face": "smile" },
+            { "who": "narration", "text": "店員さんが料理を運んでくる。頼んだのはカルボナーラなのに、来たのはペペロンチーノだった。" },
+            { "who": "staff", "text": "お待たせしました、ペペロンチーノです" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "to": "staff",
+              "text": "すみません、カルボナーラを頼んだと思うんですが…",
+              "grade": "best",
+              "reaction": [{ "who": "narration", "text": "ミサキがにこっとした。", "face": "smile" }],
+              "inner": "ちゃんと丁寧に言えるの、いいな",
+              "note": "丁寧に、でもはっきり伝えている"
+            },
+            {
+              "id": "b",
+              "to": "staff",
+              "text": "あ、大丈夫です（そのまま食べる）",
+              "grade": "good",
+              "reaction": [{ "who": "misaki", "text": "え、いいの？笑", "face": "smile" }],
+              "inner": "優しい…けど、ちょっと遠慮しすぎかも",
+              "note": "マナー違反ではない。希望を言わないのが頼りなく見えるかは、相手のタイプ次第"
+            },
+            {
+              "id": "c",
+              "to": "staff",
+              "text": "いや、カルボナーラって言ったよね？",
+              "manners": "heavy",
+              "reaction": [{ "who": "misaki", "text": "……", "face": "look_away", "delay": "long" }],
+              "inner": "え、店員さんにその言い方…？",
+              "note": "自分にどれだけ優しくても、店員さんへのため口・横柄な態度は全タイプ共通で大幅減点。ミサキは何も言わなかったが、ここで一気に冷めていた"
+            },
+            {
+              "id": "d",
+              "to": "misaki",
+              "text": "（小声で）ほら、間違えてる笑",
+              "manners": "heavy",
+              "reaction": [{ "who": "misaki", "text": "あ、うん…", "face": "troubled" }],
+              "inner": "店員さんに聞こえてそう…",
+              "note": "店員さんを笑いものにするのも、ため口と同じくらい見られている"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "mode": "face",
+          "phase": "main",
+          "scene": "consult",
+          "partner": [
+            { "who": "misaki", "text": "異動先、新しいチームのまとめ役なんだって", "face": "troubled" },
+            { "who": "misaki", "text": "私にできるかな…", "face": "sad" }
+          ],
+          "partner_after_miss": [
+            { "who": "misaki", "text": "…異動先、新しいチームのまとめ役なんだって", "face": "normal" },
+            { "who": "misaki", "text": "私にできるかな", "face": "forced_smile" }
+          ],
+          "cues": [
+            { "axis": "B", "line": "私にできるかな…", "text": "まだ気持ちの話。不安を受け止めてほしい" }
+          ],
+          "cues_after_miss": [
+            { "axis": "B", "line": "私にできるかな", "text": "不安を作り笑いで隠している。まだ気持ちの話" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "to": "misaki",
+              "text": "まとめ役か…それはプレッシャーだよね",
+              "grade": "best",
+              "reaction": [{ "who": "misaki", "text": "そうなの…ずっと考えちゃって", "face": "sad" }],
+              "inner": "わかってもらえた",
+              "note": "まだ不安の段階。答えより先に、気持ちを受け止めている"
+            },
+            {
+              "id": "b",
+              "to": "misaki",
+              "text": "ミサキならできるって！",
+              "grade": "good",
+              "reaction": [{ "who": "misaki", "text": "ありがと…でもさー", "face": "forced_smile" }],
+              "inner": "うれしいけど、不安は消えない",
+              "note": "励ましは嬉しいが、不安を受け止める前に打ち消すと、話し足りなさが残る"
+            },
+            {
+              "id": "c",
+              "to": "misaki",
+              "text": "まとめ役なら、まず週1で面談するといいよ",
+              "grade": "bad",
+              "reaction": [{ "who": "misaki", "text": "…うん、そうだよね", "face": "look_away", "delay": "long" }],
+              "inner": "まだそこまで考えられてないんだけど",
+              "note": "いずれ役に立つ助言でも、不安を打ち明けた瞬間には早すぎる",
+              "leans": { "B": "answer" }
+            },
+            {
+              "id": "d",
+              "to": "misaki",
+              "text": "出世じゃん！おめでと！",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "あ、ありがと…", "face": "forced_smile" }],
+              "inner": "おめでたい気持ちには、まだなれない",
+              "note": "前向きな言葉でも、不安を見落としている"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "mode": "face",
+          "phase": "main",
+          "scene": "consult",
+          "topic": "team_lead",
+          "partner": [
+            { "who": "misaki", "text": "でね、後輩が3人いるんだけど", "face": "normal" },
+            { "who": "misaki", "text": "どうやったら、みんなうまく回ると思う？最初に何すればいい？", "face": "normal" }
+          ],
+          "cues": [
+            { "axis": "B", "line": "どうやったら、みんなうまく回ると思う？最初に何すればいい？", "text": "チームの話になったとたん、口調が具体的になり、前のめりで答えを求めてきた（ギャップ）" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "to": "misaki",
+              "text": "最初の1週間で、一人ずつ話を聞く時間を作るのはどう？",
+              "grade": "best",
+              "reaction": [{ "who": "misaki", "text": "それいい！メモしとく", "face": "smile" }],
+              "inner": "そうそう、こういうのが聞きたかった！",
+              "note": "ギャップの瞬間。いつもは気持ち型のミサキも、チームをまとめる話になると答えがほしくなる。ここでは具体案が一番届く"
+            },
+            {
+              "id": "b",
+              "to": "misaki",
+              "text": "うんうん、不安だよね…",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "うん…で、何からやればいいかな", "face": "troubled" }],
+              "inner": "気持ちはもう大丈夫。今は答えがほしい",
+              "note": "いつもなら◎の受け止め方だが、ギャップが入った今は話が進まない。口調が変わったら、こちらも切り替える",
+              "leans": { "B": "feeling" }
+            },
+            {
+              "id": "c",
+              "to": "misaki",
+              "text": "ミサキはどうしたいの？",
+              "grade": "good",
+              "reaction": [{ "who": "misaki", "text": "うーん、それを一緒に考えてほしいんだけど笑", "face": "troubled" }],
+              "inner": "一緒に考えてほしいんだけどな",
+              "note": "考えを引き出すのは悪くないが、答えを求められている",
+              "leans": { "D": "lead" }
+            },
+            {
+              "id": "d",
+              "to": "misaki",
+              "text": "まあ、なるようになるって",
+              "grade": "bad",
+              "reaction": [{ "who": "misaki", "text": "…そっか", "face": "annoyed" }],
+              "inner": "真剣に聞いてるのに",
+              "note": "答えを求めている相手への気休めは、突き放しに聞こえる"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "mode": "face",
+          "phase": "main",
+          "scene": "consult",
+          "topic": "team_lead",
+          "partner": [
+            { "who": "misaki", "text": "あと、今の部署のみんなには、どう伝えたらいいと思う？", "face": "normal" }
+          ],
+          "partner_after_miss": [
+            { "who": "misaki", "text": "…あと、今の部署のみんなにも、どう伝えたらいいかな", "face": "troubled" }
+          ],
+          "cues": [
+            { "axis": "B", "line": "あと、今の部署のみんなには、どう伝えたらいいと思う？", "text": "まだ仕事の段取りの話。答えがほしいモードが続いている" }
+          ],
+          "cues_after_miss": [
+            { "axis": "B", "line": "…あと、今の部署のみんなにも、どう伝えたらいいかな", "text": "まだ仕事の段取りの話。答えがほしいモードが続いている" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "to": "misaki",
+              "text": "決まったら、朝会で一言あいさつするのがいいんじゃない？",
+              "grade": "best",
+              "reaction": [{ "who": "misaki", "text": "うん、そうする！", "face": "smile" }],
+              "inner": "やることが見えてきた",
+              "note": "答えがほしいモードのうちは、具体案で応える"
+            },
+            {
+              "id": "b",
+              "to": "misaki",
+              "text": "さみしくなるね…",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "うん…でも、まずは伝え方だよね", "face": "normal" }],
+              "inner": "その話は、あとでしたいかも",
+              "note": "気持ちに戻すのが早い。相手のモードが変わるまで待つ",
+              "leans": { "B": "feeling" }
+            },
+            {
+              "id": "c",
+              "to": "misaki",
+              "text": "課長に任せちゃえば？",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "うーん、自分で言いたいんだよね", "face": "troubled" }],
+              "inner": "自分の言葉で伝えたいんだけどな",
+              "note": "手軽な案だが、本人がどうしたいかを置き去りにしている"
+            },
+            {
+              "id": "d",
+              "to": "misaki",
+              "text": "メールで全員に送っとけば？",
+              "grade": "good",
+              "reaction": [{ "who": "misaki", "text": "それもありかも", "face": "normal" }],
+              "inner": "ちょっと味気ないけど、案があるのは助かる",
+              "note": "具体案ではあるが、少しそっけない"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "mode": "face",
+          "phase": "main",
+          "scene": "bid",
+          "partner": [
+            { "who": "misaki", "text": "…でも、ここのランチ行けなくなるのは寂しいな", "face": "sad" },
+            { "who": "misaki", "text": "なんてね笑", "face": "forced_smile" }
+          ],
+          "cues": [
+            { "axis": "C", "line": "なんてね笑", "text": "仕事の話が終わると、いつもの察して型に戻った。「なんてね」でごまかしている" },
+            { "axis": "A", "line": "…でも、ここのランチ行けなくなるのは寂しいな", "text": "これからも会いたい気持ち" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "to": "misaki",
+              "text": "異動しても、たまにランチ行こうよ",
+              "grade": "best",
+              "reaction": [{ "who": "misaki", "text": "…うん！行く！", "face": "smile" }],
+              "inner": "よかった、言ってくれた",
+              "note": "「なんてね」の裏の寂しさを受け止めて、次の約束にしている"
+            },
+            {
+              "id": "b",
+              "to": "misaki",
+              "text": "なんてね、って笑",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "…うん", "face": "forced_smile" }],
+              "inner": "冗談にされちゃった",
+              "note": "「なんてね」を言葉どおりに流している",
+              "leans": { "C": "literal" }
+            },
+            {
+              "id": "c",
+              "to": "misaki",
+              "text": "異動先の近くにも、いい店あるって！",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "…そうだね", "face": "look_away" }],
+              "inner": "そういうことじゃないんだけど",
+              "note": "励ましのつもりでも、寂しさから話をそらしている"
+            },
+            {
+              "id": "d",
+              "to": "misaki",
+              "text": "寂しくなるね",
+              "grade": "good",
+              "reaction": [{ "who": "misaki", "text": "うん…", "face": "sad" }],
+              "inner": "同じ気持ちなのは、うれしい",
+              "note": "気持ちは受け止めている。次につながる一言があると◎"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "mode": "face",
+          "phase": "main",
+          "scene": "decide",
+          "partner": [
+            { "who": "narration", "text": "お会計のとき、ミサキが伝票をさっと取った。" },
+            { "who": "misaki", "text": "約束どおり、ここは私ね！", "face": "smile" }
+          ],
+          "partner_after_miss": [
+            { "who": "narration", "text": "お会計のとき、ミサキが伝票を取った。" },
+            { "who": "misaki", "text": "…ここは、私が出すね", "face": "normal" }
+          ],
+          "cues": [
+            { "axis": "A", "line": "約束どおり、ここは私ね！", "text": "前回の約束を守って、お礼をしたがっている" }
+          ],
+          "cues_after_miss": [
+            { "axis": "A", "line": "…ここは、私が出すね", "text": "お礼はしたいが、さっきのやりとりで少し元気がない" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "to": "misaki",
+              "text": "ごちそうさま！次はこっちがおごるね",
+              "grade": "best",
+              "reaction": [{ "who": "misaki", "text": "ほんと？楽しみにしとく！", "face": "smile" }],
+              "inner": "次がある。よかった",
+              "note": "お礼をそのまま受け取り、次の約束も置いている"
+            },
+            {
+              "id": "b",
+              "to": "misaki",
+              "text": "やっぱ悪いよ、割り勘にしよ",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "えー、おごらせてよ…", "face": "troubled" }],
+              "inner": "せっかくのお礼なのに",
+              "note": "前回の約束を知っているなら、ここはお礼を受け取る場面",
+              "leans": { "A": "far" }
+            },
+            {
+              "id": "c",
+              "to": "misaki",
+              "text": "え、いいの？ラッキー笑",
+              "grade": "good",
+              "reaction": [{ "who": "misaki", "text": "どういたしまして〜", "face": "smile" }],
+              "inner": "喜んでくれてよかった",
+              "note": "受け取ってはいるが、お礼の一言があると◎"
+            },
+            {
+              "id": "d",
+              "to": "staff",
+              "text": "別々でお願いします",
+              "grade": "weak",
+              "reaction": [{ "who": "misaki", "text": "あ…うん", "face": "troubled" }],
+              "inner": "おごるって言ったのに",
+              "note": "失礼ではないが、ミサキのお礼の気持ちを素通りしている"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "label": "その夜・メッセージ",
+      "mode": "chat",
+      "steps": [
+        {
+          "id": 9,
+          "mode": "chat",
+          "phase": "main",
+          "scene": "bid",
+          "partner": ["今日はありがと！", "なんか、ちょっと頑張れそう😊"],
+          "partner_after_miss": ["今日はありがと", "がんばるね。"],
+          "cues": [
+            { "axis": "C", "line": "なんか、ちょっと頑張れそう😊", "text": "絵文字が戻った＝気持ちが前を向いた" }
+          ],
+          "cues_after_miss": [
+            { "axis": "C", "line": "がんばるね。", "text": "絵文字がなく「。」で終わる＝まだ不安が残っている" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "text": "よかった！新しいチームでも、ミサキらしくね",
+              "grade": "best",
+              "reaction": [{ "text": "うん！" }],
+              "note": "背中を押しつつ、そのままのミサキでいいと伝えている"
+            },
+            {
+              "id": "b",
+              "text": "頑張って！応援してる！",
+              "grade": "good",
+              "reaction": [{ "text": "ありがと！" }],
+              "note": "応援は伝わる。もう一言、ミサキ自身を認める言葉があると◎"
+            },
+            {
+              "id": "c",
+              "text": "後輩が言うこと聞かなかったら、ガツンと言いなよ",
+              "grade": "weak",
+              "reaction": [{ "text": "あはは…がんばる", "delay": "long" }],
+              "note": "仕事の助言モードは、もう終わっている。夜のあいさつには重い",
+              "leans": { "B": "answer" }
+            },
+            {
+              "id": "d",
+              "text": "（スタンプだけ返す）",
+              "send_as": "sticker",
+              "sticker": "👍",
+              "grade": "weak",
+              "reaction": [],
+              "note": "近づきたい型は、言葉のやりとりで安心する",
+              "leans": { "A": "far" }
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "mode": "chat",
+          "phase": "main",
+          "scene": "bid",
+          "partner": ["…あのさ", "異動しても、たまに相談していい？"],
+          "cues": [
+            { "axis": "A", "line": "異動しても、たまに相談していい？", "text": "これからもつながっていたい" },
+            { "axis": "D", "line": "…あのさ", "text": "言い出しにくそうに間をあけて、こちらの返事にゆだねている" }
+          ],
+          "choices": [
+            {
+              "id": "a",
+              "text": "もちろん。いつでも",
+              "grade": "best",
+              "reaction": [{ "text": "よかった🥹" }, { "text": "おやすみ〜" }],
+              "note": "迷わず受け入れている。察して型が勇気を出して聞いたときは、すぐに「もちろん」"
+            },
+            {
+              "id": "b",
+              "text": "仕事の相談なら、いつでも！",
+              "grade": "good",
+              "reaction": [{ "text": "ありがと…！" }],
+              "note": "受け入れてはいるが、「仕事の」と区切ると少し距離を感じさせる"
+            },
+            {
+              "id": "c",
+              "text": "異動先の人に相談したほうがいいんじゃない？",
+              "grade": "bad",
+              "reaction": [{ "text": "…そうだよね。", "delay": "long" }],
+              "note": "正論でも、つながっていたい相手を突き放している",
+              "leans": { "A": "far" }
+            },
+            {
+              "id": "d",
+              "text": "いいけど、たまにならね笑",
+              "grade": "weak",
+              "reaction": [{ "text": "…うん笑" }],
+              "note": "冗談でも、線を引かれたように感じる"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "result": {
+    "real_line": "異動しても、たまにランチ行こうよ",
+    "learn": [
+      "同じ人でも、話題で求めるものが変わる。ミサキはチームをまとめる話になると、気持ちより答えがほしくなる",
+      "口調が急に具体的・前のめりになったら、ギャップのサイン。こちらも切り替える",
+      "前の場面の出来は、次に会ったときの最初の表情に出る"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "itsuki",
+  "name": "イツキ",
+  "gender": "male",
+  "age": 21,
+  "type": "hedgehog",
+  "stars": 2,
+  "switches": [],
+  "style": "口数が少ない。「別に」「…まあね」。目をそらしがちで、笑うときは少しだけ",
+  "icon_text": "イ",
+  "look": {
+    "hair": "short_messy",
+    "hair_color": "black",
+    "eyes": "narrow",
+    "clothes": "hoodie",
+    "clothes_color": "gray",
+    "accessory": null
+  }
+}

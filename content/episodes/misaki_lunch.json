@@ -1,0 +1,57 @@
+{
+  "id": "misaki_lunch",
+  "character": "misaki",
+  "title": "翌週のランチ（おまけ）",
+  "intro": "約束どおり、ミサキがランチをおごってくれることになった。\n駅前のパスタ屋。",
+  "steps": [
+    {
+      "id": 1,
+      "mode": "face",
+      "phase": "main",
+      "scene": "third_party",
+      "partner": [
+        { "who": "misaki", "text": "ここのカルボナーラ、ほんとおいしいんだよ〜" },
+        { "who": "narration", "text": "店員さんが料理を運んでくる。頼んだのはカルボナーラなのに、来たのはペペロンチーノだった。" },
+        { "who": "staff", "text": "お待たせしました、ペペロンチーノです" }
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "to": "staff",
+          "text": "すみません、カルボナーラを頼んだと思うんですが…",
+          "grade": "best",
+          "reaction": [{ "who": "narration", "text": "ミサキがにこっとした。" }],
+          "inner": "ちゃんと丁寧に言えるの、いいな",
+          "note": "丁寧に、でもはっきり伝えている"
+        },
+        {
+          "id": "b",
+          "to": "staff",
+          "text": "あ、大丈夫です（そのまま食べる）",
+          "grade": "good",
+          "reaction": [{ "who": "misaki", "text": "え、いいの？笑" }],
+          "inner": "優しい…けど、ちょっと遠慮しすぎかも",
+          "note": "マナー違反ではない。希望を言わないのが頼りなく見えるかは、相手のタイプ次第"
+        },
+        {
+          "id": "c",
+          "to": "staff",
+          "text": "いや、カルボナーラって言ったよね？",
+          "manners": "heavy",
+          "reaction": [{ "who": "misaki", "text": "……", "delay": "long" }],
+          "inner": "え、店員さんにその言い方…？",
+          "note": "自分にどれだけ優しくても、店員さんへのため口・横柄な態度は全タイプ共通で大幅減点。ミサキは何も言わなかったが、ここで一気に冷めていた"
+        },
+        {
+          "id": "d",
+          "to": "misaki",
+          "text": "（小声で）ほら、間違えてる笑",
+          "manners": "heavy",
+          "reaction": [{ "who": "misaki", "text": "あ、うん…" }],
+          "inner": "店員さんに聞こえてそう…",
+          "note": "店員さんを笑いものにするのも、ため口と同じくらい見られている"
+        }
+      ]
+    }
+  ]
+}

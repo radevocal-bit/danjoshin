@@ -1,0 +1,19 @@
+{
+  "id": "ryo",
+  "name": "リョウ",
+  "gender": "male",
+  "age": 22,
+  "type": "husky",
+  "stars": 1,
+  "switches": [],
+  "style": "「ねえ聞いて！」。絵文字と「！」が多い。予定は自分から立てる",
+  "icon_text": "リ",
+  "look": {
+    "hair": "short",
+    "hair_color": "light_brown",
+    "eyes": "round",
+    "clothes": "hoodie",
+    "clothes_color": "navy",
+    "accessory": null
+  }
+}

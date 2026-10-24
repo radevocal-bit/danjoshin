@@ -1,0 +1,21 @@
+{
+  "id": "misaki",
+  "name": "ミサキ",
+  "gender": "female",
+  "age": 28,
+  "type": "rabbit",
+  "stars": 2,
+  "switches": [
+    { "topic": "team_lead", "flips": { "B": "answer" }, "cue": "チームをまとめる話になると、口調が具体的で前のめりになる" }
+  ],
+  "style": "絵文字多め。語尾は「〜！」「笑」",
+  "icon_text": "ミ",
+  "look": {
+    "hair": "bob",
+    "hair_color": "dark_brown",
+    "eyes": "round",
+    "clothes": "blouse",
+    "clothes_color": "light_blue",
+    "accessory": null
+  }
+}
