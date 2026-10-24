@@ -2,9 +2,21 @@
   "episodes": [
     { "id": "riko_01" },
     { "id": "reina_01" },
+    { "id": "wakana_01" },
+    { "id": "momoka_01" },
+    { "id": "sena_01" },
+    { "id": "runa_01" },
+    { "id": "nanami_01" },
+    { "id": "haruka_01" },
     { "id": "misaki_01" },
     { "id": "ryo_01" },
     { "id": "masato_01" },
+    { "id": "yota_01" },
+    { "id": "koki_01" },
+    { "id": "seiji_01" },
+    { "id": "wataru_01" },
+    { "id": "akira_01" },
+    { "id": "naoto_01" },
     { "id": "itsuki_01" },
     { "id": "misaki_02" }
   ]

@@ -1,0 +1,19 @@
+{
+  "id": "wakana",
+  "name": "ワカナ",
+  "gender": "female",
+  "age": 25,
+  "type": "husky",
+  "stars": 1,
+  "switches": [],
+  "style": "「ねえ聞いて！」。予定は自分で決めて、もう調べてある",
+  "icon_text": "ワ",
+  "look": {
+    "hair": "short",
+    "hair_color": "light_brown",
+    "eyes": "round",
+    "clothes": "tshirt",
+    "clothes_color": "green",
+    "accessory": "earrings"
+  }
+}

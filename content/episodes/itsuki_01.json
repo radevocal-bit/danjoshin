@@ -286,7 +286,7 @@
               "reaction": [{ "who": "itsuki", "text": "…それがわかんねえんだって", "face": "troubled" }],
               "inner": "…それを聞いてるんだけどな",
               "note": "考えを引き出すのは良い手だが、委ねてきた相手には、提案のほうが届く",
-              "leans": { "D": "lead" }
+              "leans": { "D": "follow" }
             },
             {
               "id": "c",

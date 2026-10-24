@@ -1,0 +1,19 @@
+{
+  "id": "haruka",
+  "name": "ハルカ",
+  "gender": "female",
+  "age": 26,
+  "type": "husky",
+  "stars": 1,
+  "switches": [],
+  "style": "絵文字と「！」が多い。気持ちも予定も自分から言う",
+  "icon_text": "ハ",
+  "look": {
+    "hair": "ponytail",
+    "hair_color": "black",
+    "eyes": "round",
+    "clothes": "blouse",
+    "clothes_color": "white",
+    "accessory": "earrings"
+  }
+}

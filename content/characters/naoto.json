@@ -1,0 +1,19 @@
+{
+  "id": "naoto",
+  "name": "ナオト",
+  "gender": "male",
+  "age": 33,
+  "type": "cat",
+  "stars": 1,
+  "switches": [],
+  "style": "返事はゆっくり。断るときも理由が正直",
+  "icon_text": "ナ",
+  "look": {
+    "hair": "short",
+    "hair_color": "dark_brown",
+    "eyes": "narrow",
+    "clothes": "cardigan",
+    "clothes_color": "gray",
+    "accessory": null
+  }
+}

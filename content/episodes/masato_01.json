@@ -43,7 +43,7 @@
           "grade": "weak",
           "reaction": [{ "text": "うーん、どこでもいいよ〜" }],
           "note": "考えを聞くのは悪くないが、本当にどこでもいい相手には話が進まない",
-          "leans": { "D": "lead" }
+          "leans": { "D": "follow" }
         },
         {
           "id": "c",
@@ -142,7 +142,7 @@
           "grade": "good",
           "reaction": [{ "text": "うーん…じゃあ、そば？" }],
           "note": "聞き方を工夫したのはいい。ただ、こちらから出すほうが早い",
-          "leans": { "D": "lead" }
+          "leans": { "D": "follow" }
         }
       ]
     },

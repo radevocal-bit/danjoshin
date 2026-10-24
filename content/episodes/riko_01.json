@@ -86,7 +86,7 @@
           "grade": "weak",
           "reaction": [{ "text": "えー、先輩に決めてほしいです〜笑" }],
           "note": "優しさのつもりでも、任せたい相手に、決めるのを返している",
-          "leans": { "D": "lead" }
+          "leans": { "D": "follow" }
         },
         {
           "id": "c",

@@ -287,7 +287,7 @@
               "reaction": [{ "who": "misaki", "text": "うーん、それを一緒に考えてほしいんだけど笑", "face": "troubled" }],
               "inner": "一緒に考えてほしいんだけどな",
               "note": "考えを引き出すのは悪くないが、答えを求められている",
-              "leans": { "D": "lead" }
+              "leans": { "D": "follow" }
             },
             {
               "id": "d",

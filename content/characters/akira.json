@@ -1,0 +1,19 @@
+{
+  "id": "akira",
+  "name": "アキラ",
+  "gender": "male",
+  "age": 25,
+  "type": "cat",
+  "stars": 1,
+  "switches": [],
+  "style": "「わりい、寝てた」。返信は半日後。断るときも理由が正直",
+  "icon_text": "ア",
+  "look": {
+    "hair": "short_messy",
+    "hair_color": "dark_brown",
+    "eyes": "droopy",
+    "clothes": "hoodie",
+    "clothes_color": "navy",
+    "accessory": null
+  }
+}

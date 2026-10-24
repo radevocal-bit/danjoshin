@@ -1,0 +1,19 @@
+{
+  "id": "sena",
+  "name": "セナ",
+  "gender": "female",
+  "age": 27,
+  "type": "seagull",
+  "stars": 1,
+  "switches": [],
+  "style": "率直。「行ってくる！」。毎日の連絡はない",
+  "icon_text": "セ",
+  "look": {
+    "hair": "short",
+    "hair_color": "ash",
+    "eyes": "narrow",
+    "clothes": "shirt",
+    "clothes_color": "navy",
+    "accessory": "earrings"
+  }
+}

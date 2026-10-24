@@ -1,0 +1,19 @@
+{
+  "id": "wataru",
+  "name": "ワタル",
+  "gender": "male",
+  "age": 28,
+  "type": "seagull",
+  "stars": 1,
+  "switches": [],
+  "style": "率直。連絡はたまに。用件だけ短く送ってくる",
+  "icon_text": "ワ",
+  "look": {
+    "hair": "short_messy",
+    "hair_color": "ash",
+    "eyes": "narrow",
+    "clothes": "shirt",
+    "clothes_color": "green",
+    "accessory": null
+  }
+}
