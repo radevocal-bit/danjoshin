@@ -2,7 +2,7 @@
 // S0 タイトル → S1 遊び方 → S1.5 あなたは？（初回だけ）→ S2 ホーム → S3 紹介 → S4 会話（場面ごと）→ S5 推理 → S6 結果
 
 import { BACKGROUND_IDS, lookProblems, setArtImages } from './art/index.js'
-import { TIERS, defaultTab } from './catalog.js'
+import { TIERS, defaultTab, pairingOf } from './catalog.js'
 import { loadGame, validateEpisode } from './data.js'
 import { buildReport } from './report.js'
 import { runEpisode } from './runner.js'
@@ -125,7 +125,12 @@ async function startConversation(entry) {
   session = { entry, startedAt: Date.now() }
   const conversation = createConversation(entry)
   show(conversation.el)
-  session.play = await runEpisode({ ...entry, rules: game.rules, director: conversation })
+  session.play = await runEpisode({
+    ...entry,
+    rules: game.rules,
+    director: conversation,
+    pairing: pairingOf(playerGender(), entry.character.gender), // 同性・異性で1手だけ入れかわる
+  })
   // 会話を最後まで（0点で途中終了も含む）終えた時点で記録する
   session.saved = store.recordPlay(entry.episode.id, session.play)
   await conversation.showEnd(entry.episode.guess === 'gap' ? 'ギャップ推理へ' : 'タイプ推理へ')

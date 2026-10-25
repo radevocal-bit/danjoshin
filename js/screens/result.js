@@ -138,7 +138,10 @@ function stepsPart(ctx, play) {
   )
 }
 
-function stepBlock({ character, rules }, { step, scene, lines, choice }) {
+// 同性・異性で入れかわった手の印（06 §6.5）
+const VARIANT_BADGES = { same: '同性のとき', opposite: '異性のとき' }
+
+function stepBlock({ character, rules }, { step, variant, scene, lines, choice }) {
   const evaluation = evaluationOf(choice, character.stars, rules)
   const best = choice.grade === 'best' ? null : bestChoice(step)
   const face = scene.mode === 'face'
@@ -146,6 +149,7 @@ function stepBlock({ character, rules }, { step, scene, lines, choice }) {
     h('p', { class: 'step-head' },
       h('span', { class: 'step-no', text: stepNumber(step.id) }),
       step.topic ? h('span', { class: 'badge gap', text: 'ギャップ' }) : null,
+      VARIANT_BADGES[variant] ? h('span', { class: `badge pair pair-${variant}`, text: VARIANT_BADGES[variant] }) : null,
     ),
     h('div', { class: 'mini partner' }, lines.map((line) => miniLine(line, character))),
     reply(choice, character),

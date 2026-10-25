@@ -1,18 +1,19 @@
 // 1話を最初から最後まで進める（04 §4・§5・§6、06 §4）。
 // 見せ方（チャットか会う場面か、待ち時間）は director と view に任せるので、ここは画面を知らない。
 
-import { applyDeduction, deductionFor, endReasonFor, isMiss, openingFor, scenesOf, shuffle, stepContent } from './rules.js'
+import { applyDeduction, deductionFor, endReasonFor, isMiss, openingFor, scenesOf, shuffle, stepContent, stepFor } from './rules.js'
 
 /**
  * director.enterScene(scene, index) → その場面の view
  * view が持つもの:
  *   partner(line, step) / choose(choices, step) → 選んだ choice / player(choice, step)
  *   reaction(line, step) / noReply(step) / exit(line)
+ * pairing: プレイヤーと相手が 'same' / 'opposite'。答えないなら null（入れかわる手は元の手のまま）
  * 返すもの: { episodeId, score, endReason,
  *            scenes: [{ scene, rough }],
- *            steps: [{ step, scene, afterMiss, lines, cues, choice, points, score }] }
+ *            steps: [{ step（実際に出た手）, variant, scene, afterMiss, lines, cues, choice, points, score }] }
  */
-export async function runEpisode({ episode, character, rules, director, random = Math.random }) {
+export async function runEpisode({ episode, character, rules, director, pairing = null, random = Math.random }) {
   const stars = character.stars
   const scenes = []
   const steps = []
@@ -29,7 +30,9 @@ export async function runEpisode({ episode, character, rules, director, random =
     for (const line of opening.lines) await view.partner(line, null)
 
     let misses = 0
-    for (const step of scene.steps) {
+    for (const original of scene.steps) {
+      // 同性・異性で1手だけ入れかわる（06 §6.5）
+      const { step, variant } = stepFor(original, pairing)
       const { afterMiss, lines, cues } = stepContent(step, previous, rules)
       for (const line of lines) await view.partner(line, step)
 
@@ -39,7 +42,7 @@ export async function runEpisode({ episode, character, rules, director, random =
 
       const points = deductionFor(choice, stars, rules)
       score = applyDeduction(score, points)
-      steps.push({ step, scene, afterMiss, lines, cues, choice, points, score })
+      steps.push({ step, variant, scene, afterMiss, lines, cues, choice, points, score })
       if (isMiss(choice, rules)) misses += 1
 
       const reaction = choice.reaction ?? []

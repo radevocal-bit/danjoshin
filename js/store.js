@@ -51,7 +51,7 @@ export function createStore(storage) {
     }
   }
 
-  /** { plays, best, first: { score, choices: [{ step, id }], end, at } } */
+  /** { plays, best, first: { score, choices: [{ step, id, variant? }], end, at } } */
   function read(episodeId) {
     return readJSON(keyOf(episodeId)) ?? { plays: 0, best: null, first: null }
   }
@@ -66,8 +66,9 @@ export function createStore(storage) {
       if (isFirst) {
         record.first = {
           score: play.score,
-          // 本音の間の分析（leans の集計）用に、1回目に選んだ返事の id を残す
-          choices: play.steps.map(({ step, choice }) => ({ step: step.id, id: choice.id })),
+          // 本音の間の分析（leans の集計）用に、1回目に選んだ返事の id を残す。
+          // 入れかわる手は、どれを出したか（same / opposite / base＝元の手）も残す
+          choices: play.steps.map(({ step, choice, variant }) => ({ step: step.id, id: choice.id, ...(variant ? { variant } : {}) })),
           end: play.endReason,
           at: new Date().toISOString(),
         }

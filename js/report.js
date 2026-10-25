@@ -3,6 +3,8 @@
 import { GENDERS, PAIRINGS, TIERS, pairingOf } from './catalog.js'
 import { rankFor } from './rules.js'
 
+const VARIANTS = { same: '同性', opposite: '異性', base: '元の手' }
+
 /**
  * guess: null（スキップ）/ { kind: 'type', answers: { A: 'near', … } } / { kind: 'gap', option: 'a' }
  */
@@ -14,15 +16,17 @@ export function buildReport({ rules, types, episode, character, play, saved, gue
   const now = isFirst ? `${play.score}` : `${play.score}（${record.plays}回目）`
   const picks = play.steps.map(({ step, choice }) => `${step.id}-${choice.id}${markOf(choice, rules)}`).join(' ')
   const ended = play.endReason ? `（${play.steps.length}手目で終了）` : ''
+  const swapped = play.steps.find(({ variant }) => variant) // 同性・異性で入れかわる手（そこまで進んだとき）
   return [
     '【男女心 試作テスト】',
     `話: ${character.name}「${episode.title}」${tier ? `（${tier}）` : ''}`,
     `あなた: ${GENDERS[playerGender] ?? GENDERS.none}${pairing ? `（${PAIRINGS[pairing]}）` : ''}`,
     `初見スコア: ${first.score}（${rankFor(first.score, rules).label}） / 今回: ${now}`,
     `選んだ返事: ${picks}${ended}`,
+    swapped ? `入れかわる手: ${swapped.step.id}手目＝${VARIANTS[swapped.variant]}` : null,
     guessLine(episode, guess, types, character),
     `プレイ時間: ${formatDuration(playMs)}`,
-  ].join('\n')
+  ].filter((line) => line != null).join('\n')
 }
 
 export function formatDuration(ms) {

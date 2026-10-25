@@ -37,6 +37,25 @@ export function stepContent(step, previousChoice, rules) {
   }
 }
 
+// 同性・異性で入れかわる手（06 §6.5）で、上書きできる項目
+export const PAIRING_FIELDS = ['scene', 'partner', 'partner_after_miss', 'cues', 'cues_after_miss', 'choices']
+
+/**
+ * プレイヤーと相手の組み合わせ（same / opposite / null＝答えない）で出す手（06 §6.5）。
+ * by_pairing にその組み合わせがあれば、書いてある項目だけを上書きする（id・mode・phase は元の手のまま）。
+ * variant: 'same' / 'opposite'（入れかえた）・'base'（入れかわる手だが元の手を出した）・null（入れかわらない手）
+ */
+export function stepFor(step, pairing) {
+  if (!step.by_pairing) return { step, variant: null }
+  const override = pairing ? step.by_pairing[pairing] : null
+  if (!override) return { step, variant: 'base' }
+  const merged = { ...step }
+  for (const field of PAIRING_FIELDS) {
+    if (field in override) merged[field] = override[field]
+  }
+  return { step: merged, variant: pairing }
+}
+
 const singleScenes = new WeakMap()
 
 /** 話の場面。v1 の形（scenes がなく steps が直下）は、札のない1つの場面として扱う */
