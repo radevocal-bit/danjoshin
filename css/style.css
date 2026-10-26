@@ -50,6 +50,10 @@ button { font: inherit; color: inherit; }
   .app { box-shadow: 0 0 0 1px var(--line), 0 12px 48px rgb(70 50 40 / 10%); }
 }
 .boot { padding: 40vh 16px 0; text-align: center; color: var(--muted); }
+.boot .btn { max-width: 300px; margin: 20px auto 0; }
+.error .btn { max-width: 300px; margin-top: 20px; }
+.error-detail { margin-top: 16px; }
+.boot p, .error p { text-wrap: balance; }
 
 /* ---------- 画面の枠 ---------- */
 .screen { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }

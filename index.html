@@ -7,21 +7,36 @@
   <meta name="robots" content="noindex, nofollow">
   <title>男女心（仮）試作版</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="男女心">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="preload" href="content/bundle.json?v=5095af021f" as="fetch" crossorigin="anonymous">
+  <link rel="stylesheet" href="css/style.css?v=d54a7eb072">
   <script>
-    // ファイルを直接開くと JSON を読めないので、案内だけ出す
+    // アプリが動く前でも出せる案内（ファイルを直接開いたとき・JS を読めなかったとき・時間がかかるとき）
+    function danjoNotice(message) {
+      var app = document.getElementById('app')
+      if (!app || !document.querySelector('#app .boot-wait')) return
+      app.innerHTML = '<div class="boot"><p>' + message + '</p>' +
+        '<button class="btn btn-primary" type="button" onclick="location.reload()">もう一度</button></div>'
+    }
     if (location.protocol === 'file:') {
       document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('app').innerHTML =
           '<p class="boot">このファイルは直接開けません。<br>npm start で開くか、静的ホスティングに置いてください（README.md）。</p>'
       })
+    } else {
+      setTimeout(function () { danjoNotice('読み込みに時間がかかっています。') }, 12000)
     }
   </script>
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/app.js?v=3704edcbc1" onerror="danjoNotice('読み込めませんでした。通信のよいところで、もう一度ためしてください。')"></script>
 </head>
 <body>
   <div id="app" class="app">
-    <p class="boot">読み込み中…</p>
+    <p class="boot boot-wait">読み込み中…</p>
   </div>
   <noscript><p class="boot">JavaScript を有効にしてください。</p></noscript>
 </body>
