@@ -425,16 +425,222 @@ function backgroundArt(id) {
 
 return { FACE_IDS, BACKGROUND_IDS, lookProblems, setArtImages, characterArt, backgroundArt }
 })()
+// ---- js/store.js
+__modules["js/store.js"] = (() => {
+// 保存（ブラウザ内だけ。サーバーには送らない。04 §8・06 §4 S1.5）
+// スマホアプリにするときは、このファイルの storage を差し替える。
+
+const PREFIX = 'danjo:v1:'
+
+// 名前を変えた記録（前の名前 → 今の名前）。開いたときに今の名前へ移す（遊んだ人の記録を消さない）
+// 2026-10-28: 毎回初見の記録を関係ごとに分けた。前の 'free' は友達の記録として引きつぐ（08 §4.4）
+const RENAMED = [['free', 'free:friend']]
+
+/**
+ * いくつかの記録（readSeries の形）を合わせる。ホームの「毎回初見（おまかせ）」のカードと、前の名前の記録の引きつぎに使う。
+ * 会ったタイプは重ねずに数える。1回目は早いほう、前回の相手は先に渡したほう
+ */
+function combineSeries(records) {
+  const sum = (key) => records.reduce((total, record) => total + (record[key] ?? 0), 0)
+  const bests = records.map((record) => record.best).filter((best) => best != null)
+  const firsts = records.map((record) => record.first).filter(Boolean).sort((a, b) => String(a.at).localeCompare(String(b.at)))
+  return {
+    plays: sum('plays'),
+    best: bests.length ? Math.max(...bests) : null,
+    first: firsts[0] ?? null,
+    met: [...new Set(records.flatMap((record) => record.met ?? []))],
+    last: records.find((record) => record.last)?.last ?? null,
+    guessed: sum('guessed'),
+    perfect: sum('perfect'),
+  }
+}
+
+function browserStorage() {
+  try {
+    const storage = globalThis.localStorage
+    storage.setItem(`${PREFIX}probe`, '1')
+    storage.removeItem(`${PREFIX}probe`)
+    return storage
+  } catch {
+    // プライベートブラウズなどで使えないときは、ページを開いている間だけ覚える
+    return memoryStorage()
+  }
+}
+
+function memoryStorage() {
+  const map = new Map()
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => {
+      map.set(key, String(value))
+    },
+    removeItem: (key) => {
+      map.delete(key)
+    },
+    key: (index) => [...map.keys()][index] ?? null,
+    get length() {
+      return map.size
+    },
+  }
+}
+
+function createStore(storage) {
+  const keyOf = (episodeId) => `${PREFIX}episode:${episodeId}`
+  const seriesKeyOf = (series) => `${PREFIX}${series}`
+  const playerKey = `${PREFIX}player`
+  const pagesKey = `${PREFIX}pages`
+
+  function readJSON(key) {
+    try {
+      return JSON.parse(storage.getItem(key))
+    } catch {
+      return null // 読めなければ新しく始める
+    }
+  }
+  function writeJSON(key, value) {
+    try {
+      storage.setItem(key, JSON.stringify(value))
+      return true
+    } catch {
+      return false // 保存できなくても遊べる
+    }
+  }
+
+  /** { plays, best, first: { score, choices: [{ step, id, variant? }], end, at } } */
+  function read(episodeId) {
+    return readJSON(keyOf(episodeId)) ?? { plays: 0, best: null, first: null }
+  }
+
+  /**
+   * 相手が毎回ちがう遊び方の記録。series は、お話（06 §6.6）なら 'story:<お話ID>'、
+   * 毎回初見（07）なら関係ごとに 'free:<関係>'（08 §4.4。catalog.seriesOf）。
+   * read の形に、会ったタイプ（met）・前回の相手（last: { type, name }）・
+   * タイプ推理をした回数（guessed）と、4軸ぜんぶ当てた回数（perfect）を足したもの
+   */
+  function readSeries(series) {
+    return { plays: 0, best: null, first: null, met: [], last: null, guessed: 0, perfect: 0, ...readJSON(seriesKeyOf(series)) }
+  }
+
+  // 前の名前の記録を、今の名前へ移す。今の名前にも記録があれば合わせる（前の版を開いたままの画面で遊んだ分も消さない）
+  for (const [before, after] of RENAMED) {
+    if (readJSON(seriesKeyOf(before)) == null) continue
+    const next = readJSON(seriesKeyOf(after)) == null ? readSeries(before) : combineSeries([readSeries(after), readSeries(before)])
+    if (writeJSON(seriesKeyOf(after), next)) storage.removeItem(seriesKeyOf(before))
+  }
+
+  /** 最後まで遊んだ1回を数える。初見（1回目）は上書きしない。extra は1回目の記録に足すもの */
+  function countPlay(record, play, extra = {}) {
+    const isFirst = !record.first
+    if (isFirst) {
+      record.first = {
+        score: play.score,
+        // 本音の間の分析（leans の集計）用に、1回目に選んだ返事の id を残す。
+        // 入れかわる手は、どれを出したか（same / opposite / base＝元の手）も残す
+        choices: play.steps.map(({ step, choice, variant }) => ({ step: step.id, id: choice.id, ...(variant ? { variant } : {}) })),
+        end: play.endReason,
+        at: new Date().toISOString(),
+        ...extra,
+      }
+    }
+    record.best = record.best == null ? play.score : Math.max(record.best, play.score)
+    record.plays += 1
+    return isFirst
+  }
+
+  return {
+    read,
+    readSeries,
+
+    /** 最後まで遊んだ1回を記録する。初見（1回目）は上書きしない */
+    recordPlay(episodeId, play) {
+      const record = read(episodeId)
+      const isFirst = countPlay(record, play)
+      writeJSON(keyOf(episodeId), record)
+      return { isFirst, record }
+    },
+
+    /**
+     * お話・毎回初見を最後まで遊んだ1回を記録する。1回目の記録には相手のタイプと名前（extra も）を残し、
+     * 次は同じ相手を続けないように、前回の相手（last）を覚える
+     */
+    recordSeriesPlay(series, play, { type, name, ...extra }) {
+      const record = readSeries(series)
+      const isFirst = countPlay(record, play, { type, name, ...extra })
+      record.last = { type, name }
+      writeJSON(seriesKeyOf(series), record)
+      return { isFirst, record }
+    },
+
+    /** 種明かしで会ったタイプを数える。会ったタイプの一覧を返す */
+    meetType(series, type) {
+      const record = readSeries(series)
+      if (!record.met.includes(type)) {
+        record.met = [...record.met, type]
+        writeJSON(seriesKeyOf(series), record)
+      }
+      return record.met
+    },
+
+    /** タイプ推理をした1回を数える（perfect: 4軸ぜんぶ当てた）。{ guessed, perfect } を返す */
+    countGuess(series, perfect) {
+      const record = readSeries(series)
+      record.guessed += 1
+      if (perfect) record.perfect += 1
+      writeJSON(seriesKeyOf(series), record)
+      return { guessed: record.guessed, perfect: record.perfect }
+    },
+
+    /** プレイヤーの設定: { gender: 'male' | 'female' | 'none' } */
+    player() {
+      return readJSON(playerKey) ?? {}
+    },
+
+    savePlayer(patch) {
+      const next = { ...this.player(), ...patch }
+      writeJSON(playerKey, next)
+      return next
+    },
+
+    /** 関係のページで最後に選んだもの（08 §4.2。この端末だけ）: { segment?, gender? } */
+    page(categoryId) {
+      return readJSON(pagesKey)?.[categoryId] ?? {}
+    },
+
+    savePage(categoryId, patch) {
+      const pages = { ...readJSON(pagesKey) }
+      pages[categoryId] = { ...pages[categoryId], ...patch }
+      writeJSON(pagesKey, pages)
+      return pages[categoryId]
+    },
+
+    /** この試作の記録を全部消す（?reset=1） */
+    clear() {
+      const keys = []
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i)
+        if (key?.startsWith(PREFIX)) keys.push(key)
+      }
+      for (const key of keys) storage.removeItem(key)
+    },
+  }
+}
+
+return { combineSeries, browserStorage, memoryStorage, createStore }
+})()
 // ---- js/catalog.js
 __modules["js/catalog.js"] = (() => {
-// ホームに並べる話（06 §4 S2）。段階・同性／異性・鍵を決める。画面には触らない。
+// ホーム「だれと話す？」と関係のページ（08 §4）に並べるもの。段階・同性／異性・鍵を決める。画面には触らない。
+
+const { combineSeries } = __modules["js/store.js"]
 
 const TIERS = { beginner: '初級', intermediate: '中級', advanced: '上級' }
 const GENDERS = { male: '男性', female: '女性', none: '答えない' }
 const PAIRINGS = { same: '同性', opposite: '異性' }
-const TABS = [
-  { id: 'female', label: '女心を学ぶ' },
-  { id: 'male', label: '男心を学ぶ' },
+/** 関係のページの「相手の性別」の切りかえ（08 §4.2）。最初は「どちらも」 */
+const PARTNER_GENDERS = [
+  { id: 'any', label: 'どちらも' },
+  { id: 'female', label: '女性' },
+  { id: 'male', label: '男性' },
 ]
 
 /** 同性／異性。プレイヤーが「答えない」なら null（札を出さない） */
@@ -443,93 +649,198 @@ function pairingOf(playerGender, partnerGender) {
   return playerGender === partnerGender ? 'same' : 'opposite'
 }
 
-/** 最初に開くタブ: 異性の相手のタブ。「答えない」なら女心 */
-function defaultTab(playerGender) {
-  return playerGender === 'female' ? 'male' : 'female'
-}
-
-/** 相手の性別（タブ）。お話（06 §6.6）は、お話のファイルに書いてある */
+/** 相手の性別。お話（06 §6.6）は、お話のファイルに書いてある */
 function genderOf(entry) {
   return entry.story ? entry.story.gender : entry.character.gender
 }
 
+/** 話の札（tier・pairing・category・segment）。お話は、お話のファイルに書いてある */
+const tagsOf = (entry) => entry.story ?? entry.episode
+
+/** 恋愛の話（pairing: opposite）は、同性のプレイヤーには出さない */
+const shownTo = (entry, playerGender) => !(tagsOf(entry).pairing === 'opposite' && pairingOf(playerGender, genderOf(entry)) === 'same')
+
+/** プレイヤーが性別を答えているか（「答えない」でない） */
+const answered = (playerGender) => playerGender === 'male' || playerGender === 'female'
+
 /**
  * 相手が毎回ちがう遊び方の記録の名前（store.readSeries に渡す）。固定の人の話は null。
- * お話は 'story:<お話ID>'、毎回初見（07）は 'free'
+ * お話は 'story:<お話ID>'。毎回初見（07）は関係ごとに 'free:<関係>'（切りかえごとに部品があれば 'free:<関係>:<切りかえ>'。08 §4.4）
  */
 function seriesOf(entry) {
   if (entry.story) return `story:${entry.story.id}`
-  return entry.free ? 'free' : null
+  if (!entry.free) return null
+  return ['free', entry.category, entry.segment].filter(Boolean).join(':')
+}
+
+/**
+ * 毎回初見の部品がある所（08 §2.3）。関係に free: true があれば関係ごと（segment: null）、
+ * 切りかえに free: true があれば切りかえごと → [{ category, segment }]
+ */
+function freeSpots(categories) {
+  return categories.categories.flatMap((category) => (category.free
+    ? [{ category: category.id, segment: null }]
+    : (category.segments ?? []).filter((segment) => segment.free).map((segment) => ({ category: category.id, segment: segment.id }))))
+}
+
+/** 毎回初見の場所の名前（結果の「毎回初見（友達）で会ったタイプ」）。例: 友達／恋愛・付き合う前 */
+function spotLabel(categories, { category, segment }) {
+  const found = categories.categories.find((item) => item.id === category)
+  if (!found) return category ?? ''
+  const part = segment ? found.segments?.find((item) => item.id === segment) : null
+  return part ? `${found.label}・${part.label}` : found.label
+}
+
+/**
+ * 毎回初見の相手の性別（08 §4.2）。恋愛・夫婦（pairing: opposite）は、男性・女性のプレイヤーには異性。
+ * ほかは相手の性別の切りかえどおり。「どちらも」なら null（開くときに男女をランダムに決める）
+ */
+function freeGenderOf(category, playerGender, partnerGender) {
+  if (category?.pairing === 'opposite' && answered(playerGender)) return playerGender === 'male' ? 'female' : 'male'
+  return partnerGender === 'female' || partnerGender === 'male' ? partnerGender : null
+}
+
+/**
+ * 毎回初見のカードを開くときに、関係・切りかえ・相手の性別を決める。
+ * おまかせ（ホーム。08 §4.1）なら、部品がある所から1つを選ぶ。性別が決まっていなければ、男女をランダムに
+ */
+function resolveFree(source, { categories, playerGender, random = Math.random }) {
+  const spots = freeSpots(categories)
+  const spot = source.omakase ? spots[Math.floor(random() * spots.length)] : source
+  const category = categories.categories.find((item) => item.id === spot.category)
+  const gender = (source.omakase ? freeGenderOf(category, playerGender, 'any') : source.gender) ?? (random() < 0.5 ? 'female' : 'male')
+  return { category: spot.category, segment: spot.segment, gender }
 }
 
 const NO_SERIES = { plays: 0, best: null, met: [], guessed: 0, perfect: 0 }
 
 /**
- * タブに並べる話のカード
- * @param entries         index.json の順。固定の人の話 { episode, character } と、お話 { story, variants }
- * @param recordOf        (episodeId) => { plays, best }
- * @param seriesRecordOf  (seriesOf の名前) => { plays, best, met, guessed, perfect }
- * @param free            毎回初見モード（07）があれば { total: タイプの数 }。各タブのいちばん上にカードを出す
+ * ホームの関係のタイル（08 §4.1）。categories.json の順
+ * free: 毎回初見の部品があれば true（部品がそろっていなければ、どの関係にも出さない）
+ * → [{ id, category, label, sub, count（このプレイヤーに出る話の数）, free（＋毎回初見）, empty（準備中） }]
  */
-function homeCards({ entries, tab, playerGender, recordOf, seriesRecordOf = () => NO_SERIES, free = null }) {
-  const byId = new Map(entries.filter((entry) => entry.episode).map((entry) => [entry.episode.id, entry]))
-  const freeCards = free ? [freeCard({ tab, playerGender, total: free.total, record: seriesRecordOf('free') })] : []
-  return [...freeCards, ...entries
-    .filter((entry) => genderOf(entry) === tab)
-    .map((entry) => {
-      const { episode, character, story } = entry
-      const pairing = pairingOf(playerGender, genderOf(entry))
-      const base = {
-        entry,
-        pairing,
-        tier: TIERS[(story ?? episode).tier] ?? null,
-        // 恋愛の話（opposite）は、同性のプレイヤーには出さない
-        hidden: (story ?? episode).pairing === 'opposite' && pairing === 'same',
-      }
-      if (story) {
-        // お話のカードには名前を出さない（始めるときに相手が決まる）。題と一言の説明だけ
-        const record = seriesRecordOf(seriesOf(entry))
-        return {
-          ...base,
-          id: story.id,
-          story,
-          locked: false,
-          lockText: null,
-          best: record.best,
-          met: record.met?.length ?? 0,
-          total: story.variants.length,
-          summary: story.summary,
-        }
-      }
-      const required = episode.requires ? byId.get(episode.requires) : null
-      const locked = Boolean(episode.requires) && !(recordOf(episode.requires).plays > 0)
-      return {
-        ...base,
-        id: episode.id,
-        episode,
-        character,
-        locked,
-        lockText: locked
-          ? required
-            ? `${required.character.name}『${required.episode.title}』を遊ぶと開きます`
-            : '前の話を遊ぶと開きます'
-          : null,
-        best: recordOf(episode.id).best,
-        relation: (episode.intro ?? '').split('\n')[0],
-      }
-    })
-    .filter((card) => !card.hidden)]
+function homeTiles({ categories, entries, playerGender, free = false }) {
+  const spots = free ? freeSpots(categories) : []
+  return categories.categories.map((category) => {
+    const count = entries.filter((entry) => tagsOf(entry).category === category.id && shownTo(entry, playerGender)).length
+    const hasFree = spots.some((spot) => spot.category === category.id)
+    return { id: category.id, category, label: category.label, sub: category.sub ?? null, count, free: hasFree, empty: !count && !hasFree }
+  })
 }
 
-/** 毎回初見（07）のカード。相手の性別はタブで決まり、記録は両方のタブで1つ */
-function freeCard({ tab, playerGender, total, record }) {
+/**
+ * ホームの「毎回初見（おまかせ）」のカード（08 §4.1）。部品がなければ null。
+ * 記録は、全部の関係を合わせたもの（会ったタイプは重ねずに数える）
+ * free: { total: タイプの数 } / seriesRecordOf: (seriesOf の名前) => 記録
+ */
+function omakaseCard({ categories, free, seriesRecordOf = () => NO_SERIES }) {
+  const spots = free ? freeSpots(categories) : []
+  if (!spots.length) return null
+  const record = combineSeries(spots.map((spot) => seriesRecordOf(seriesOf({ free: true, ...spot }))))
+  return freeCard({ id: 'free', entry: { free: true, omakase: true }, pairing: null, total: free.total, record })
+}
+
+/**
+ * 関係のページ（08 §4.2）。切りかえ・相手の性別で絞った話のカード（index.json の順）と、毎回初見のカード
+ * @param segment        選んでいる切りかえ（ない・知らない id なら、遊べるものがある最初の切りかえ。どれも空なら1つ目）
+ * @param partnerGender  'any' | 'female' | 'male'（相手の性別の切りかえを出さない関係では使わない）
+ * @param recordOf       (episodeId) => { plays, best }
+ * @param seriesRecordOf (seriesOf の名前) => { plays, best, met, guessed, perfect }
+ * @param free           毎回初見の部品があれば { total: タイプの数 }
+ * @returns { category, segments, segment, genderFilter（相手の性別の切りかえを出すか）, partnerGender, controls, cards, empty }
+ *   controls: 切りかえ・相手の性別を出すか（この関係に、このプレイヤーが遊べるものが何もなければ出さない）
+ *   empty: 話のカードがないとき 'category'（この関係の話がない）/ 'filter'（切りかえ・性別で絞ると空）。あれば null
+ */
+function categoryPage({ category, entries, segment = null, partnerGender = 'any', playerGender, recordOf, seriesRecordOf = () => NO_SERIES, free = null }) {
+  // 恋愛・夫婦は、男性・女性のプレイヤーには異性の相手だけなので、相手の性別は選ばない
+  const genderFilter = !(category.pairing === 'opposite' && answered(playerGender))
+  const gender = genderFilter && PARTNER_GENDERS.some((item) => item.id === partnerGender) ? partnerGender : 'any'
+  const available = entries.filter((entry) => tagsOf(entry).category === category.id && shownTo(entry, playerGender))
+  const spots = free ? freeSpots({ categories: [category] }) : []
+
+  // 切りかえ: 選んだもの。まだ選んでいなければ、遊べるものがある最初の切りかえ（どれも空なら1つ目）
+  const segments = category.segments ?? []
+  const fits = (entry, segmentId) => (!segmentId || tagsOf(entry).segment === segmentId) && (gender === 'any' || genderOf(entry) === gender)
+  const filled = (item) => available.some((entry) => fits(entry, item.id)) || spots.some((spot) => !spot.segment || spot.segment === item.id)
+  const chosen = segments.length ? (segments.find((item) => item.id === segment) ?? segments.find(filled) ?? segments[0]).id : null
+
+  const byId = new Map(entries.filter((entry) => entry.episode).map((entry) => [entry.episode.id, entry]))
+  const cards = available.filter((entry) => fits(entry, chosen)).map((entry) => entryCard(entry, { playerGender, recordOf, seriesRecordOf, byId }))
+
+  // 毎回初見: 関係ごとの部品なら、どの切りかえでも出す。切りかえごとの部品なら、その切りかえのときだけ
+  const spot = spots.find((item) => !item.segment || item.segment === chosen)
+  const freeGender = freeGenderOf(category, playerGender, gender)
+  const freeCards = spot
+    ? [freeCard({
+        id: seriesOf({ free: true, ...spot }),
+        entry: { free: true, ...spot, gender: freeGender },
+        pairing: freeGender ? pairingOf(playerGender, freeGender) : null,
+        total: free.total,
+        record: seriesRecordOf(seriesOf({ free: true, ...spot })),
+      })]
+    : []
   return {
-    id: 'free',
-    entry: { free: true, gender: tab },
+    category,
+    segments,
+    segment: chosen,
+    genderFilter,
+    partnerGender: gender,
+    controls: available.length > 0 || spots.length > 0,
+    cards: [...freeCards, ...cards],
+    empty: cards.length ? null : available.length ? 'filter' : 'category',
+  }
+}
+
+/** 話のカード（固定の人の話・お話）。中身は 06 §4 S2 のまま */
+function entryCard(entry, { playerGender, recordOf, seriesRecordOf, byId }) {
+  const { episode, character, story } = entry
+  const base = {
+    entry,
+    pairing: pairingOf(playerGender, genderOf(entry)),
+    tier: TIERS[tagsOf(entry).tier] ?? null,
+  }
+  if (story) {
+    // お話のカードには名前を出さない（始めるときに相手が決まる）。題と一言の説明だけ
+    const record = seriesRecordOf(seriesOf(entry))
+    return {
+      ...base,
+      id: story.id,
+      story,
+      locked: false,
+      lockText: null,
+      best: record.best,
+      met: record.met?.length ?? 0,
+      total: story.variants.length,
+      summary: story.summary,
+    }
+  }
+  const required = episode.requires ? byId.get(episode.requires) : null
+  const locked = Boolean(episode.requires) && !(recordOf(episode.requires).plays > 0)
+  return {
+    ...base,
+    id: episode.id,
+    episode,
+    character,
+    locked,
+    lockText: locked
+      ? required
+        ? `${required.character.name}『${required.episode.title}』を遊ぶと開きます`
+        : '前の話を遊ぶと開きます'
+      : null,
+    best: recordOf(episode.id).best,
+    relation: (episode.intro ?? '').split('\n')[0],
+  }
+}
+
+/** 毎回初見（07）のカード */
+function freeCard({ id, entry, pairing, total, record }) {
+  return {
+    id,
+    entry,
     free: true,
-    pairing: pairingOf(playerGender, tab),
+    omakase: Boolean(entry.omakase),
+    pairing,
     tier: TIERS.beginner,
-    hidden: false,
     locked: false,
     lockText: null,
     best: record.best,
@@ -540,12 +851,12 @@ function freeCard({ tab, playerGender, total, record }) {
   }
 }
 
-return { TIERS, GENDERS, PAIRINGS, TABS, pairingOf, defaultTab, genderOf, seriesOf, homeCards }
+return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, seriesOf, freeSpots, spotLabel, freeGenderOf, resolveFree, homeTiles, omakaseCard, categoryPage }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=c66fa00731"
+const BUNDLE = "content/bundle.json?v=1ed70de0d2"
 
 return { BUNDLE }
 })()
@@ -878,7 +1189,7 @@ function buildStep({ sceneId, index, free, part, type, fill, random }) {
 /**
  * 毎回初見の会話を1つ組み立てる（07 §5）。
  * free: { scenes, topics, types: { タイプID: 話し方 } } / types: types.json（軸と tips）
- * gender: 相手の性別（ホームのタブ）/ last: 前回の相手 { type, name }（同じタイプ・名前は続けない）
+ * gender: 相手の性別（関係のページの切りかえか、開くときにランダム。catalog.resolveFree）/ last: 前回の相手 { type, name }（同じタイプ・名前は続けない）
  * random: 乱数（テストでは種を決めたものを渡す）
  * → { free: true, episode, character }（今までの話と同じ形。★2・初級・pairing any）
  */
@@ -1013,6 +1324,7 @@ function gameFromBundle(bundle) {
   })
   return {
     index: bundle.index,
+    categories: bundle.categories,
     rules: bundle.rules,
     types: bundle.types,
     art: bundle.art ?? NO_ART,
@@ -1026,12 +1338,13 @@ function gameFromBundle(bundle) {
  * 遊べる話を全部読む（ホームに並べるため）。index.json に並ぶのは、2つの形:
  *   { id }    固定の人の話 → { episode, character }
  *   { story } お話（06 §6.6。相手は毎回ちがう）→ { story, variants: [タイプごとの話] }
- * ほかに、毎回初見モード（07）の部品を free に読む（そろっていなければ null）
+ * ほかに、関係の種類（08。categories.json）と、毎回初見モード（07）の部品を free に読む（そろっていなければ null）
  */
 async function loadGame() {
   if (BUNDLE) return gameFromBundle(await fetchJSON(BUNDLE))
-  const [index, rules, types, art] = await Promise.all([
+  const [index, categories, rules, types, art] = await Promise.all([
     loadJSON('content/index.json'),
+    loadJSON('content/categories.json'),
     loadJSON('content/rules.json'),
     loadJSON('content/types.json'),
     loadJSON('content/art.json').catch(() => NO_ART), // 画像に差し替えていなければ、なくてよい
@@ -1041,7 +1354,7 @@ async function loadGame() {
     Promise.all(index.episodes.map((item) => (item.story ? loadStory(item.story) : loadEpisode(item.id)))),
     loadFree(types.types.map((type) => type.id)),
   ])
-  return { index, rules, types, art, names, free, entries }
+  return { index, categories, rules, types, art, names, free, entries }
 }
 
 /** 毎回初見モード（07）の部品。16タイプの話し方がそろっていなければ null（そのモードは出さない） */
@@ -1424,6 +1737,52 @@ function validateFree(free, { rules, types }) {
   return [...new Set(problems)]
 }
 
+/**
+ * 関係の種類（08）の点検。categories.json と、話の札（category・segment・pairing。08 §4.5）
+ * entries: 札を確かめる話（固定の人の話 { episode, character } とお話 { story, variants }）
+ */
+function validateCategories(categories, entries = []) {
+  const problems = []
+  const list = categories?.categories ?? []
+  const ids = list.map((category) => category.id)
+  if (!list.length) problems.push('categories.json: categories がない')
+  if (new Set(ids).size !== ids.length) problems.push('categories.json: 関係の id が重複している')
+  for (const category of list) {
+    const at = `categories.json ${category.id ?? '（id なし）'}`
+    if (!category.id || !category.label) problems.push(`${at}: id と label がいる`)
+    if (category.pairing && category.pairing !== 'opposite') problems.push(`${at}: pairing「${category.pairing}」は opposite だけ`)
+    if (!category.segments) continue
+    const segmentIds = category.segments.map((segment) => segment.id)
+    if (segmentIds.length < 2) problems.push(`${at}: segments（切りかえ）は2つ以上`)
+    if (new Set(segmentIds).size !== segmentIds.length) problems.push(`${at}: 切りかえの id が重複している`)
+    if (category.segments.some((segment) => !segment.id || !segment.label)) problems.push(`${at}: 切りかえに id と label がいる`)
+  }
+
+  // 恋愛の話（pairing: opposite）は、pairing: opposite の関係（恋愛・夫婦）にだけ置く。その関係の話は、みな pairing: opposite
+  const opposite = list.filter((category) => category.pairing === 'opposite').map((category) => category.label).join('・')
+  for (const entry of entries) {
+    const tags = entry.story ?? entry.episode
+    const at = tags.id
+    const category = list.find((item) => item.id === tags.category)
+    if (!tags.category) {
+      problems.push(`${at}: category（関係の種類）がない`)
+      continue
+    }
+    if (!category) {
+      problems.push(`${at}: category「${tags.category}」が categories.json にない`)
+      continue
+    }
+    const segmentIds = (category.segments ?? []).map((segment) => segment.id)
+    if (segmentIds.length && !segmentIds.includes(tags.segment)) {
+      problems.push(`${at}: ${category.label}の話には segment（${segmentIds.join(' / ')}）を書く${tags.segment ? `（「${tags.segment}」はない）` : ''}`)
+    }
+    if (!segmentIds.length && tags.segment != null) problems.push(`${at}: ${category.label}には切りかえがないので、segment は書かない`)
+    if (tags.pairing === 'opposite' && category.pairing !== 'opposite') problems.push(`${at}: pairing: opposite の話は、${opposite}にだけ置く（今は${category.label}）`)
+    if (category.pairing === 'opposite' && tags.pairing !== 'opposite') problems.push(`${at}: ${category.label}の話は pairing: opposite にする`)
+  }
+  return problems
+}
+
 const PAIRING_NAMES = { same: '同性', opposite: '異性' }
 
 /** その手の手がかりの軸（cues と cues_after_miss）。並べて返す */
@@ -1431,7 +1790,7 @@ function cueAxes(step) {
   return [...new Set([...(step.cues ?? []), ...(step.cues_after_miss ?? [])].map((cue) => cue.axis))].sort()
 }
 
-return { fetchJSON, loadJSON, gameFromBundle, loadGame, loadFree, loadEpisode, loadStory, validateEpisode, validateStory, validateFree }
+return { fetchJSON, loadJSON, gameFromBundle, loadGame, loadFree, loadEpisode, loadStory, validateEpisode, validateStory, validateFree, validateCategories }
 })()
 // ---- js/report.js
 __modules["js/report.js"] = (() => {
@@ -1564,163 +1923,6 @@ async function runEpisode({ episode, character, rules, director, pairing = null,
 }
 
 return { runEpisode }
-})()
-// ---- js/store.js
-__modules["js/store.js"] = (() => {
-// 保存（ブラウザ内だけ。サーバーには送らない。04 §8・06 §4 S1.5）
-// スマホアプリにするときは、このファイルの storage を差し替える。
-
-const PREFIX = 'danjo:v1:'
-
-function browserStorage() {
-  try {
-    const storage = globalThis.localStorage
-    storage.setItem(`${PREFIX}probe`, '1')
-    storage.removeItem(`${PREFIX}probe`)
-    return storage
-  } catch {
-    // プライベートブラウズなどで使えないときは、ページを開いている間だけ覚える
-    return memoryStorage()
-  }
-}
-
-function memoryStorage() {
-  const map = new Map()
-  return {
-    getItem: (key) => (map.has(key) ? map.get(key) : null),
-    setItem: (key, value) => {
-      map.set(key, String(value))
-    },
-    removeItem: (key) => {
-      map.delete(key)
-    },
-    key: (index) => [...map.keys()][index] ?? null,
-    get length() {
-      return map.size
-    },
-  }
-}
-
-function createStore(storage) {
-  const keyOf = (episodeId) => `${PREFIX}episode:${episodeId}`
-  const seriesKeyOf = (series) => `${PREFIX}${series}`
-  const playerKey = `${PREFIX}player`
-
-  function readJSON(key) {
-    try {
-      return JSON.parse(storage.getItem(key))
-    } catch {
-      return null // 読めなければ新しく始める
-    }
-  }
-  function writeJSON(key, value) {
-    try {
-      storage.setItem(key, JSON.stringify(value))
-    } catch {
-      // 保存できなくても遊べる
-    }
-  }
-
-  /** { plays, best, first: { score, choices: [{ step, id, variant? }], end, at } } */
-  function read(episodeId) {
-    return readJSON(keyOf(episodeId)) ?? { plays: 0, best: null, first: null }
-  }
-
-  /**
-   * 相手が毎回ちがう遊び方の記録。series は、お話（06 §6.6）なら 'story:<お話ID>'、毎回初見（07）なら 'free'。
-   * read の形に、会ったタイプ（met）・前回の相手（last: { type, name }）・
-   * タイプ推理をした回数（guessed）と、4軸ぜんぶ当てた回数（perfect）を足したもの
-   */
-  function readSeries(series) {
-    return { plays: 0, best: null, first: null, met: [], last: null, guessed: 0, perfect: 0, ...readJSON(seriesKeyOf(series)) }
-  }
-
-  /** 最後まで遊んだ1回を数える。初見（1回目）は上書きしない。extra は1回目の記録に足すもの */
-  function countPlay(record, play, extra = {}) {
-    const isFirst = !record.first
-    if (isFirst) {
-      record.first = {
-        score: play.score,
-        // 本音の間の分析（leans の集計）用に、1回目に選んだ返事の id を残す。
-        // 入れかわる手は、どれを出したか（same / opposite / base＝元の手）も残す
-        choices: play.steps.map(({ step, choice, variant }) => ({ step: step.id, id: choice.id, ...(variant ? { variant } : {}) })),
-        end: play.endReason,
-        at: new Date().toISOString(),
-        ...extra,
-      }
-    }
-    record.best = record.best == null ? play.score : Math.max(record.best, play.score)
-    record.plays += 1
-    return isFirst
-  }
-
-  return {
-    read,
-    readSeries,
-
-    /** 最後まで遊んだ1回を記録する。初見（1回目）は上書きしない */
-    recordPlay(episodeId, play) {
-      const record = read(episodeId)
-      const isFirst = countPlay(record, play)
-      writeJSON(keyOf(episodeId), record)
-      return { isFirst, record }
-    },
-
-    /**
-     * お話・毎回初見を最後まで遊んだ1回を記録する。1回目の記録には相手のタイプと名前（extra も）を残し、
-     * 次は同じ相手を続けないように、前回の相手（last）を覚える
-     */
-    recordSeriesPlay(series, play, { type, name, ...extra }) {
-      const record = readSeries(series)
-      const isFirst = countPlay(record, play, { type, name, ...extra })
-      record.last = { type, name }
-      writeJSON(seriesKeyOf(series), record)
-      return { isFirst, record }
-    },
-
-    /** 種明かしで会ったタイプを数える。会ったタイプの一覧を返す */
-    meetType(series, type) {
-      const record = readSeries(series)
-      if (!record.met.includes(type)) {
-        record.met = [...record.met, type]
-        writeJSON(seriesKeyOf(series), record)
-      }
-      return record.met
-    },
-
-    /** タイプ推理をした1回を数える（perfect: 4軸ぜんぶ当てた）。{ guessed, perfect } を返す */
-    countGuess(series, perfect) {
-      const record = readSeries(series)
-      record.guessed += 1
-      if (perfect) record.perfect += 1
-      writeJSON(seriesKeyOf(series), record)
-      return { guessed: record.guessed, perfect: record.perfect }
-    },
-
-    /** プレイヤーの設定: { gender: 'male' | 'female' | 'none' } */
-    player() {
-      return readJSON(playerKey) ?? {}
-    },
-
-    savePlayer(patch) {
-      const next = { ...this.player(), ...patch }
-      writeJSON(playerKey, next)
-      return next
-    },
-
-    /** この試作の記録を全部消す（?reset=1） */
-    clear() {
-      const keys = []
-      for (let i = 0; i < storage.length; i++) {
-        const key = storage.key(i)
-        if (key?.startsWith(PREFIX)) keys.push(key)
-      }
-      for (const key of keys) storage.removeItem(key)
-    },
-  }
-}
-
-return { browserStorage, memoryStorage, createStore }
 })()
 // ---- js/ui.js
 __modules["js/ui.js"] = (() => {
@@ -2343,65 +2545,57 @@ return { guessScreen }
 })()
 // ---- js/screens/home.js
 __modules["js/screens/home.js"] = (() => {
-// S2 ホーム（06 §4）。タブは相手の性別。★（心の余裕）はここでは出さない
+// S2 ホーム「だれと話す？」と、関係のページ（08 §4。06 §4 S2 のタブを置きかえた）。★（心の余裕）はここでは出さない
 
-const { GENDERS, PAIRINGS, TABS, homeCards } = __modules["js/catalog.js"]
-const { characterAvatar, h, tierBadge } = __modules["js/ui.js"]
+const { GENDERS, PAIRINGS, PARTNER_GENDERS, categoryPage, homeTiles, omakaseCard } = __modules["js/catalog.js"]
+const { art, characterAvatar, h, tierBadge } = __modules["js/ui.js"]
 
-function homeScreen({ entries, tab, playerGender, recordOf, seriesRecordOf, free, onTab, onOpen, onChangeGender }) {
-  const cards = homeCards({ entries, tab, playerGender, recordOf, seriesRecordOf, free })
-  const pairBadge = (c) => (c.pairing ? h('span', { class: `badge pair pair-${c.pairing}`, text: PAIRINGS[c.pairing] }) : null)
+// 関係のタイルの絵（決まった SVG。色はタイトルの絵と同じ2色）。知らない関係は吹き出し
+const PINK = '#d4566e'
+const NAVY = '#33405e'
+/** 人の形（頭と肩）。x: 真ん中 / top: 頭のてっぺん / size: 頭の大きさ。足もとは y=27 */
+const person = (x, top, size, color) => {
+  const n = (value) => Number(value.toFixed(1))
+  const w = size * 0.75
+  const shoulder = top + size + 1.3
+  const k = (27 - shoulder) * 0.35
+  return `<circle cx="${n(x)}" cy="${n(top + size / 2)}" r="${n(size / 2)}" fill="${color}"/>`
+    + `<path d="M${n(x - w)} 27C${n(x - w)} ${n(shoulder + k)} ${n(x - w * 0.55)} ${n(shoulder)} ${n(x)} ${n(shoulder)}S${n(x + w)} ${n(shoulder + k)} ${n(x + w)} 27Z" fill="${color}"/>`
+}
+const svg = (body) => `<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${body}</svg>`
+const CATEGORY_ART = {
+  romance: svg(`<path fill="${PINK}" d="M16 27.5C9.2 23 4.5 18.6 4.5 13.1 4.5 9.6 7.2 7 10.5 7c2.3 0 4.3 1.2 5.5 3.1C17.2 8.2 19.2 7 21.5 7c3.3 0 6 2.6 6 6.1 0 5.5-4.7 9.9-11.5 14.4z"/>`),
+  married: svg(`<circle cx="12" cy="19" r="6.8" fill="none" stroke="${NAVY}" stroke-width="2.6"/><circle cx="20" cy="19" r="6.8" fill="none" stroke="${PINK}" stroke-width="2.6"/><path d="M20 6.5l2.4 2.7-2.4 2.7-2.4-2.7z" fill="${PINK}"/>`),
+  friend: svg(person(10, 6.5, 8.4, PINK) + person(22, 6.5, 8.4, NAVY)),
+  coworker: svg(`<path d="M12 11V8.8C12 7.8 12.8 7 13.8 7h4.4c1 0 1.8.8 1.8 1.8V11" fill="none" stroke="${NAVY}" stroke-width="2.4"/><rect x="4.5" y="11" width="23" height="15" rx="3" fill="${NAVY}"/><rect x="13.5" y="15.5" width="5" height="5" rx="1.2" fill="${PINK}"/>`),
+  seniority: svg(`${person(16, 5, 10, NAVY)}<path d="M16 16.8l1.9 2.1-1.9 6.7-1.9-6.7z" fill="${PINK}"/>`),
+  parent_child: svg(person(11.5, 5, 9.4, NAVY) + person(23.5, 12.5, 6.4, PINK)),
+  siblings: svg(person(7.5, 8.5, 6.8, NAVY) + person(16.5, 11.5, 6, PINK) + person(25, 14.5, 5.2, NAVY)),
+}
+const OTHER_ART = svg(`<path fill="${PINK}" d="M8 7h16a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4h-9l-6 5v-5H8a4 4 0 0 1-4-4v-8a4 4 0 0 1 4-4z"/>`)
 
-  const cardNode = (c) => h('button', {
-    class: `ep-card${c.locked ? ' locked' : ''}`,
+const categoryIcon = (id, className) => h('span', { class: className }, art(CATEGORY_ART[id] ?? OTHER_ART))
+
+const EMPTY = {
+  category: 'この関係の話は準備中です',
+  filter: 'この組み合わせの話は準備中です',
+}
+
+/** S2 ホーム: 上に「毎回初見（おまかせ）」、その下に「だれと話す？」と関係のタイル（2列） */
+function homeScreen({ categories, entries, playerGender, seriesRecordOf, free, onOpen, onCategory, onChangeGender }) {
+  const omakase = omakaseCard({ categories, free, seriesRecordOf })
+  const tiles = homeTiles({ categories, entries, playerGender, free: Boolean(free) })
+
+  const tileNode = (tile) => h('button', {
+    class: `tile${tile.empty ? ' empty' : ''}`,
     type: 'button',
-    disabled: c.locked,
-    onClick: () => onOpen(c.entry),
+    onClick: () => onCategory(tile.id),
   },
-    characterAvatar(c.character, 'md'),
-    h('span', { class: 'ep-body' },
-      h('span', { class: 'ep-top' },
-        h('span', { class: 'ep-name', text: c.character.name }),
-        tierBadge(c.episode.tier, c.tier),
-        pairBadge(c),
-      ),
-      h('span', { class: 'ep-title', text: c.episode.title }),
-      c.locked
-        ? h('span', { class: 'ep-lock', text: `🔒 ${c.lockText}` })
-        : h('span', { class: 'ep-relation', text: c.relation }),
-      !c.locked && c.best != null ? h('span', { class: 'ep-best', text: `最高 ${c.best}点` }) : null,
-    ),
-  )
-
-  // お話（06 §6.6）: 相手は始めるときに決まるので、名前も顔も出さない
-  const storyNode = (c) => h('button', { class: 'ep-card story', type: 'button', onClick: () => onOpen(c.entry) },
-    characterAvatar({ id: c.story.id, name: '？', icon_text: '？' }, 'md'),
-    h('span', { class: 'ep-body' },
-      h('span', { class: 'ep-top' },
-        h('span', { class: 'ep-who', text: '相手は毎回かわる' }),
-        tierBadge(c.story.tier, c.tier),
-        pairBadge(c),
-      ),
-      h('span', { class: 'ep-title', text: c.story.title }),
-      h('span', { class: 'ep-relation', text: c.summary }),
-      c.best != null ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}` }) : null,
-    ),
-  )
-
-  // 毎回初見（07）: 開くたびに、相手も会話もその場で組み立てる
-  const freeNode = (c) => h('button', { class: 'ep-card free', type: 'button', onClick: () => onOpen(c.entry) },
-    characterAvatar({ id: 'free', name: '？', icon_text: '？' }, 'md'),
-    h('span', { class: 'ep-body' },
-      h('span', { class: 'ep-top' },
-        h('span', { class: 'ep-who', text: `${c.total}タイプのだれか` }),
-        tierBadge('beginner', c.tier),
-        pairBadge(c),
-      ),
-      h('span', { class: 'ep-title', text: '毎回初見' }),
-      h('span', { class: 'ep-relation', text: 'だれが来るかは、開くまでわからない' }),
-      c.best != null
-        ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}・4軸ぜんぶ当てた ${c.perfect}回` })
-        : null,
+    categoryIcon(tile.id, 'tile-icon'),
+    h('span', { class: 'tile-text' },
+      h('span', { class: 'tile-label', text: tile.label }),
+      tile.sub ? h('span', { class: 'tile-sub', text: tile.sub }) : null,
+      h('span', { class: 'tile-meta', text: tileMeta(tile) }),
     ),
   )
 
@@ -2413,25 +2607,121 @@ function homeScreen({ entries, tab, playerGender, recordOf, seriesRecordOf, free
         h('span', { class: 'home-change', text: '変える' }),
       ),
     ),
-    h('div', { class: 'tabs', role: 'tablist' },
-      TABS.map((item) => h('button', {
-        class: 'tab',
-        type: 'button',
-        role: 'tab',
-        'aria-selected': String(item.id === tab),
-        onClick: () => onTab(item.id),
-      }, item.label)),
-    ),
-    h('div', { class: 'home-list' },
-      cards.length
-        ? cards.map((c) => (c.free ? freeNode(c) : c.story ? storyNode(c) : cardNode(c)))
-        : h('p', { class: 'fine home-empty', text: 'まだ遊べる話がありません' }),
-    ),
+    omakase ? h('div', { class: 'home-list home-omakase' }, freeNode(omakase, onOpen)) : null,
+    h('h2', { class: 'home-heading', text: 'だれと話す？' }),
+    h('div', { class: 'tiles' }, tiles.map(tileNode)),
     h('p', { class: 'fine home-foot', text: '記録はこの端末のブラウザの中にだけ残ります。' }),
   )
 }
 
-return { homeScreen }
+/** タイルの下の行: 「8話＋毎回初見」「3話」「準備中」 */
+function tileMeta(tile) {
+  if (tile.empty) return '準備中'
+  if (!tile.count) return '毎回初見'
+  return `${tile.count}話${tile.free ? '＋毎回初見' : ''}`
+}
+
+/** 関係のページ: 切りかえ・相手の性別・その関係の毎回初見・話の一覧 */
+function categoryScreen({ category, entries, segment, partnerGender, playerGender, recordOf, seriesRecordOf, free, onBack, onSegment, onGender, onOpen }) {
+  const page = categoryPage({ category, entries, segment, partnerGender, playerGender, recordOf, seriesRecordOf, free })
+
+  return h('section', { class: 'screen home category' },
+    h('header', { class: 'home-head' },
+      h('button', { class: 'home-you back', type: 'button', onClick: onBack }, '‹ もどる'),
+    ),
+    h('div', { class: 'category-title' },
+      categoryIcon(category.id, 'tile-icon'),
+      h('div', {},
+        h('h1', { class: 'category-name', text: category.label }),
+        category.sub ? h('p', { class: 'tile-sub', text: category.sub }) : null,
+      ),
+    ),
+    page.controls && page.segments.length
+      ? h('div', { class: 'tabs', role: 'tablist', style: `--count: ${page.segments.length}` },
+          page.segments.map((item) => h('button', {
+            class: 'tab',
+            type: 'button',
+            role: 'tab',
+            'aria-selected': String(item.id === page.segment),
+            onClick: () => onSegment(item.id),
+          }, item.label)),
+        )
+      : null,
+    page.controls && page.genderFilter
+      ? h('div', { class: 'filter', role: 'group', 'aria-label': '相手の性別' },
+          h('span', { class: 'filter-label', text: '相手の性別' }),
+          PARTNER_GENDERS.map((item) => h('button', {
+            class: 'filter-btn',
+            type: 'button',
+            'aria-pressed': String(item.id === page.partnerGender),
+            onClick: () => onGender(item.id),
+          }, item.label)),
+        )
+      : null,
+    h('div', { class: 'home-list' },
+      page.cards.map((c) => (c.free ? freeNode(c, onOpen) : c.story ? storyNode(c, onOpen) : cardNode(c, onOpen))),
+      page.empty ? h('p', { class: 'fine home-empty', text: EMPTY[page.empty] }) : null,
+    ),
+  )
+}
+
+const pairBadge = (c) => (c.pairing ? h('span', { class: `badge pair pair-${c.pairing}`, text: PAIRINGS[c.pairing] }) : null)
+
+/** 固定の人の話のカード */
+const cardNode = (c, onOpen) => h('button', {
+  class: `ep-card${c.locked ? ' locked' : ''}`,
+  type: 'button',
+  disabled: c.locked,
+  onClick: () => onOpen(c.entry),
+},
+  characterAvatar(c.character, 'md'),
+  h('span', { class: 'ep-body' },
+    h('span', { class: 'ep-top' },
+      h('span', { class: 'ep-name', text: c.character.name }),
+      tierBadge(c.episode.tier, c.tier),
+      pairBadge(c),
+    ),
+    h('span', { class: 'ep-title', text: c.episode.title }),
+    c.locked
+      ? h('span', { class: 'ep-lock', text: `🔒 ${c.lockText}` })
+      : h('span', { class: 'ep-relation', text: c.relation }),
+    !c.locked && c.best != null ? h('span', { class: 'ep-best', text: `最高 ${c.best}点` }) : null,
+  ),
+)
+
+// お話（06 §6.6）: 相手は始めるときに決まるので、名前も顔も出さない
+const storyNode = (c, onOpen) => h('button', { class: 'ep-card story', type: 'button', onClick: () => onOpen(c.entry) },
+  characterAvatar({ id: c.story.id, name: '？', icon_text: '？' }, 'md'),
+  h('span', { class: 'ep-body' },
+    h('span', { class: 'ep-top' },
+      h('span', { class: 'ep-who', text: '相手は毎回かわる' }),
+      tierBadge(c.story.tier, c.tier),
+      pairBadge(c),
+    ),
+    h('span', { class: 'ep-title', text: c.story.title }),
+    h('span', { class: 'ep-relation', text: c.summary }),
+    c.best != null ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}` }) : null,
+  ),
+)
+
+// 毎回初見（07）: 開くたびに、相手も会話もその場で組み立てる。おまかせ（ホーム）は関係も決める
+const freeNode = (c, onOpen) => h('button', { class: 'ep-card free', type: 'button', onClick: () => onOpen(c.entry) },
+  characterAvatar({ id: 'free', name: '？', icon_text: '？' }, 'md'),
+  h('span', { class: 'ep-body' },
+    h('span', { class: 'ep-top' },
+      h('span', { class: 'ep-who', text: `${c.total}タイプのだれか` }),
+      tierBadge('beginner', c.tier),
+      pairBadge(c),
+    ),
+    h('span', { class: 'ep-title', text: c.omakase ? '毎回初見（おまかせ）' : '毎回初見' }),
+    h('span', { class: 'ep-relation', text: 'だれが来るかは、開くまでわからない' }),
+    c.best != null
+      ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}・4軸ぜんぶ当てた ${c.perfect}回` })
+      : null,
+  ),
+)
+
+return { homeScreen, categoryScreen }
 })()
 // ---- js/screens/result.js
 __modules["js/screens/result.js"] = (() => {
@@ -2445,8 +2735,11 @@ const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮'
 const stepNumber = (id) => CIRCLED[id - 1] ?? `${id}.`
 const STAR_LABELS = { 1: '余裕あり', 2: 'ふつう', 3: '余裕なし' } // 心の余裕（設計書 §3.3）
 
-/** tally: お話・毎回初見の腕前の行（「このお話で会ったタイプ 2/4」など）。固定の人の話なら null */
-function resultScreen({ episode, character, rules, types, play, saved, guess, tally = null, onRetry, onHome, onCopy }) {
+/**
+ * tally: お話・毎回初見の腕前の行（「このお話で会ったタイプ 2/4」など）。固定の人の話なら null
+ * homeLabel: もどる先（来た関係のページか、ホーム。08 §4.3）
+ */
+function resultScreen({ episode, character, rules, types, play, saved, guess, tally = null, onRetry, onHome, homeLabel = 'ホームにもどる', onCopy }) {
   const type = types.types.find((t) => t.id === character.type)
   const axes = Object.entries(types.axes)
   const result = episode.result ?? {}
@@ -2467,7 +2760,7 @@ function resultScreen({ episode, character, rules, types, play, saved, guess, ta
       : null,
     h('p', { class: 'footnote', text: 'タイプは入口。最後は目の前の本人に聞くのが一番。' }),
     h('div', { class: 'actions' },
-      h('button', { class: 'btn btn-primary', type: 'button', onClick: onHome }, 'ホームにもどる'),
+      h('button', { class: 'btn btn-primary', type: 'button', onClick: onHome }, homeLabel),
       h('button', { class: 'btn btn-secondary', type: 'button', onClick: onRetry }, 'もう一度'),
       copyBlock(onCopy),
     ),
@@ -2711,8 +3004,8 @@ function genderScreen({ current, onDone }) {
   )
 }
 
-/** S3 紹介。タイプも★も出さず、段階のバッジを出す */
-function introScreen({ episode, character, tierLabel, onStart, onBack }) {
+/** S3 紹介。タイプも★も出さず、段階のバッジを出す。backLabel: もどる先（来た関係のページか、ホーム。08 §4.3） */
+function introScreen({ episode, character, tierLabel, onStart, onBack, backLabel = 'ホームにもどる' }) {
   return h('section', { class: 'screen page center intro' },
     characterAvatar(character, 'xl'),
     h('p', { class: 'intro-name', text: character.name }),
@@ -2722,7 +3015,7 @@ function introScreen({ episode, character, tierLabel, onStart, onBack }) {
       h('p', { class: 'intro-text', text: episode.intro }),
     ),
     h('button', { class: 'btn btn-primary', type: 'button', onClick: onStart }, '会話をはじめる'),
-    onBack ? h('button', { class: 'btn btn-ghost', type: 'button', onClick: onBack }, 'ホームにもどる') : null,
+    onBack ? h('button', { class: 'btn btn-ghost', type: 'button', onClick: onBack }, backLabel) : null,
   )
 }
 
@@ -2730,12 +3023,13 @@ return { titleScreen, howToScreen, genderScreen, introScreen }
 })()
 // ---- js/main.js
 __modules["js/main.js"] = (() => {
-// 男女心（仮）試作版 — 画面の流れ（04 §4・06 §4）
-// S0 タイトル → S1 遊び方 → S1.5 あなたは？（初回だけ）→ S2 ホーム → S3 紹介 → S4 会話（場面ごと）→ S5 推理 → S6 結果
+// 男女心（仮）試作版 — 画面の流れ（04 §4・06 §4・08 §4）
+// S0 タイトル → S1 遊び方 → S1.5 あなたは？（初回だけ）→ S2 ホーム（だれと話す？）→ 関係のページ
+//   → S3 紹介 → S4 会話（場面ごと）→ S5 推理 → S6 結果
 
 const { BACKGROUND_IDS, lookProblems, setArtImages } = __modules["js/art/index.js"]
-const { TIERS, defaultTab, pairingOf, seriesOf } = __modules["js/catalog.js"]
-const { loadGame, validateEpisode, validateFree, validateStory } = __modules["js/data.js"]
+const { TIERS, pairingOf, resolveFree, seriesOf, spotLabel } = __modules["js/catalog.js"]
+const { loadGame, validateCategories, validateEpisode, validateFree, validateStory } = __modules["js/data.js"]
 const { assembleFree, freeLessons } = __modules["js/free.js"]
 const { buildReport } = __modules["js/report.js"]
 const { runEpisode } = __modules["js/runner.js"]
@@ -2745,7 +3039,7 @@ const { copyText, h, toast } = __modules["js/ui.js"]
 const { setSpeed, skipWaits } = __modules["js/wait.js"]
 const { createConversation } = __modules["js/views/conversation.js"]
 const { guessScreen } = __modules["js/screens/guess.js"]
-const { homeScreen } = __modules["js/screens/home.js"]
+const { categoryScreen, homeScreen } = __modules["js/screens/home.js"]
 const { resultScreen } = __modules["js/screens/result.js"]
 const { genderScreen, howToScreen, introScreen, titleScreen } = __modules["js/screens/start.js"]
 
@@ -2770,9 +3064,10 @@ document.addEventListener('keydown', (event) => {
   if (skipWaits() > 0) event.preventDefault()
 })
 
-let game // { index, rules, types, art, names, free, entries: [{ episode, character } または お話 { story, variants }] }
-let homeTab = null // ホームで開いているタブ（相手の性別）
-// いまのプレイ: { source（ホームで選んだもの）, entry（遊ぶ { episode, character, story?, free? }）, startedAt, play, saved, guess, playMs, tally }
+let game // { index, categories, rules, types, art, names, free, entries: [{ episode, character } または お話 { story, variants }] }
+// 話を選んだ所: null（ホーム）か、関係のページの関係 ID。紹介・結果からは、ここへもどる（08 §4.3）
+let place = null
+// いまのプレイ: { source（ホームか関係のページで選んだもの）, entry（遊ぶ { episode, character, story?, free? }）, startedAt, play, saved, guess, playMs, tally }
 let session
 
 function show(screen, { guard = true } = {}) {
@@ -2813,6 +3108,7 @@ function checkContent() {
     for (const problem of lookProblems(character.look)) console.warn(`[art] ${character.id}: ${problem}`)
   }
   if (game.free) for (const problem of validateFree(game.free, options)) console.warn(`[content] ${problem}`)
+  for (const problem of validateCategories(game.categories, game.entries)) console.warn(`[content] ${problem}`)
 }
 
 function afterHowTo() {
@@ -2825,52 +3121,91 @@ function showGender() {
     current: store.player().gender,
     onDone: (gender) => {
       store.savePlayer({ gender })
-      homeTab ??= defaultTab(gender)
       showHome()
     },
   }))
 }
 
-function showHome({ guard = true } = {}) {
-  homeTab ??= defaultTab(playerGender())
+const freeInfo = () => (game.free ? { total: Object.keys(game.free.types).length } : null)
+const records = {
+  recordOf: (id) => store.read(id),
+  seriesRecordOf: (series) => store.readSeries(series),
+}
+
+/** S2 ホーム「だれと話す？」（08 §4.1） */
+function showHome() {
+  place = null
   show(homeScreen({
+    categories: game.categories,
     entries: game.entries,
-    tab: homeTab,
     playerGender: playerGender(),
-    recordOf: (id) => store.read(id),
-    seriesRecordOf: (series) => store.readSeries(series),
-    free: game.free ? { total: Object.keys(game.free.types).length } : null,
-    onTab: (tab) => {
-      homeTab = tab
-      showHome({ guard: false })
-    },
+    ...records,
+    free: freeInfo(),
     onOpen: openEntry,
+    onCategory: showCategory,
     onChangeGender: showGender,
+  }))
+}
+
+/** 関係のページ（08 §4.2）。選んだ切りかえと相手の性別は、この端末に覚えておく */
+function showCategory(id, { guard = true } = {}) {
+  const category = game.categories.categories.find((item) => item.id === id)
+  if (!category) return showHome()
+  place = id
+  const saved = store.page(id)
+  const choose = (patch) => {
+    store.savePage(id, patch)
+    showCategory(id, { guard: false })
+  }
+  show(categoryScreen({
+    category,
+    entries: game.entries,
+    segment: saved.segment ?? null,
+    partnerGender: saved.gender ?? 'any',
+    playerGender: playerGender(),
+    ...records,
+    free: freeInfo(),
+    onBack: showHome,
+    onSegment: (segment) => choose({ segment }),
+    onGender: (gender) => choose({ gender }),
+    onOpen: openEntry,
   }), { guard })
 }
 
+/** 紹介・結果からもどる（来た関係のページか、ホーム） */
+const showPlace = () => (place ? showCategory(place) : showHome())
+const placeLabel = () => {
+  const category = place && game.categories.categories.find((item) => item.id === place)
+  return category ? `${category.label}の一覧にもどる` : 'ホームにもどる'
+}
+
 /**
- * ホームで選んだ話を開く。お話（06 §6.6）なら、ここで相手（タイプ・名前・見た目）が決まる。
- * 毎回初見（07）なら、相手も会話もここで組み立てる
+ * 選んだ話を開く。お話（06 §6.6）なら、ここで相手（タイプ・名前・見た目）が決まる。
+ * 毎回初見（07）なら、関係（おまかせのとき）と相手の性別を決めて、相手も会話もここで組み立てる
  */
 function openEntry(source) {
-  const series = seriesOf(source)
+  const target = source.free ? { ...source, ...resolveFree(source, { categories: game.categories, playerGender: playerGender() }) } : source
+  const series = seriesOf(target)
   const last = series ? store.readSeries(series).last : null
-  const entry = source.free
-    ? assembleFree({ free: game.free, types: game.types, names: game.names, gender: source.gender, last })
-    : source.story
-      ? castStory({ ...source, names: game.names, last })
-      : source
+  const entry = target.free
+    ? {
+        ...assembleFree({ free: game.free, types: game.types, names: game.names, gender: target.gender, last }),
+        category: target.category,
+        segment: target.segment,
+      }
+    : target.story
+      ? castStory({ ...target, names: game.names, last })
+      : target
   showIntro(entry, source)
 }
 
 function showIntro(entry, source) {
-  homeTab = entry.character.gender
   show(introScreen({
     ...entry,
     tierLabel: TIERS[entry.episode.tier],
     onStart: () => startConversation(entry, source),
-    onBack: () => showHome(),
+    onBack: showPlace,
+    backLabel: placeLabel(),
   }))
 }
 
@@ -2913,7 +3248,8 @@ function showResult() {
     guess: session.guess,
     tally: session.tally,
     onRetry: () => openEntry(session.source), // お話なら、また新しい相手になる
-    onHome: () => showHome(),
+    onHome: showPlace,
+    homeLabel: placeLabel(),
     onCopy: copyReport,
   }))
 }
@@ -2928,7 +3264,7 @@ function withLessons(entry, play) {
 
 /**
  * お話・毎回初見の腕前（結果とコピーに出す行）。会ったタイプは、種明かし（結果の画面）で数える。
- * 毎回初見は、タイプ推理で4軸ぜんぶ当てた回数も数える（推理をスキップした回は数えない）
+ * 毎回初見は関係ごとの記録（08 §4.4）で、タイプ推理で4軸ぜんぶ当てた回数も数える（推理をスキップした回は数えない）
  */
 function tallyOf(entry, guess) {
   const series = seriesOf(entry)
@@ -2940,7 +3276,7 @@ function tallyOf(entry, guess) {
     ? store.countGuess(series, Object.keys(game.types.axes).every((axis) => guess.answers[axis] === type[axis]))
     : store.readSeries(series)
   return [
-    `毎回初見で会ったタイプ ${met}/${Object.keys(game.free.types).length}`,
+    `毎回初見（${spotLabel(game.categories, entry)}）で会ったタイプ ${met}/${Object.keys(game.free.types).length}`,
     `4軸ぜんぶ当てた ${counts.perfect}回／${counts.guessed}回`,
   ]
 }
