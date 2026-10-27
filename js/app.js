@@ -448,26 +448,53 @@ function defaultTab(playerGender) {
   return playerGender === 'female' ? 'male' : 'female'
 }
 
+/** 相手の性別（タブ）。お話（06 §6.6）は、お話のファイルに書いてある */
+function genderOf(entry) {
+  return entry.story ? entry.story.gender : entry.character.gender
+}
+
 /**
  * タブに並べる話のカード
- * @param entries   [{ episode, character }]（index.json の順）
- * @param recordOf  (episodeId) => { plays, best }
+ * @param entries        index.json の順。固定の人の話 { episode, character } と、お話 { story, variants }
+ * @param recordOf       (episodeId) => { plays, best }
+ * @param storyRecordOf  (storyId) => { plays, best, met }
  */
-function homeCards({ entries, tab, playerGender, recordOf }) {
-  const byId = new Map(entries.map((entry) => [entry.episode.id, entry]))
+function homeCards({ entries, tab, playerGender, recordOf, storyRecordOf = () => ({ plays: 0, best: null, met: [] }) }) {
+  const byId = new Map(entries.filter((entry) => entry.episode).map((entry) => [entry.episode.id, entry]))
   return entries
-    .filter(({ character }) => character.gender === tab)
-    .map(({ episode, character }) => {
-      const pairing = pairingOf(playerGender, character.gender)
+    .filter((entry) => genderOf(entry) === tab)
+    .map((entry) => {
+      const { episode, character, story } = entry
+      const pairing = pairingOf(playerGender, genderOf(entry))
+      const base = {
+        entry,
+        pairing,
+        tier: TIERS[(story ?? episode).tier] ?? null,
+        // 恋愛の話（opposite）は、同性のプレイヤーには出さない
+        hidden: (story ?? episode).pairing === 'opposite' && pairing === 'same',
+      }
+      if (story) {
+        // お話のカードには名前を出さない（始めるときに相手が決まる）。題と一言の説明だけ
+        const record = storyRecordOf(story.id)
+        return {
+          ...base,
+          id: story.id,
+          story,
+          locked: false,
+          lockText: null,
+          best: record.best,
+          met: record.met?.length ?? 0,
+          total: story.variants.length,
+          summary: story.summary,
+        }
+      }
       const required = episode.requires ? byId.get(episode.requires) : null
       const locked = Boolean(episode.requires) && !(recordOf(episode.requires).plays > 0)
       return {
+        ...base,
+        id: episode.id,
         episode,
         character,
-        pairing,
-        tier: TIERS[episode.tier] ?? null,
-        // 恋愛の話（opposite）は、同性のプレイヤーには出さない
-        hidden: episode.pairing === 'opposite' && pairing === 'same',
         locked,
         lockText: locked
           ? required
@@ -481,12 +508,12 @@ function homeCards({ entries, tab, playerGender, recordOf }) {
     .filter((card) => !card.hidden)
 }
 
-return { TIERS, GENDERS, PAIRINGS, TABS, pairingOf, defaultTab, homeCards }
+return { TIERS, GENDERS, PAIRINGS, TABS, pairingOf, defaultTab, genderOf, homeCards }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=5095af021f"
+const BUNDLE = "content/bundle.json?v=f3ac25d8ae"
 
 return { BUNDLE }
 })()
@@ -604,6 +631,112 @@ function shuffle(items, random = Math.random) {
 
 return { deductionFor, applyDeduction, endReasonFor, isMiss, stepContent, PAIRING_FIELDS, stepFor, scenesOf, openingFor, rankFor, bestChoice, evaluationOf, shuffle }
 })()
+// ---- js/stories.js
+__modules["js/stories.js"] = (() => {
+// お話と、毎回ちがう相手（06 §6.6）。画面には触らない。
+// お話（content/stories/<id>.json）は、4タイプぶんの話（variants）を持つ。
+// 始めるたびに、タイプ・名前・見た目を決めてキャラを作り、そのタイプの話を今までどおり遊ぶ。
+
+const NAME_SLOT = '{name}'
+
+// 見た目の候補（06 §5.2 の値のうち、描けるもの）。小さな絵でも、ひと目で性別が分かるものに絞る
+const LOOKS = {
+  female: {
+    hair: ['bob', 'long', 'ponytail'],
+    hair_color: ['black', 'dark_brown', 'brown', 'light_brown', 'ash'],
+    eyes: ['round', 'narrow', 'droopy'],
+    clothes: ['blouse', 'cardigan', 'shirt', 'tshirt', 'hoodie'],
+    clothes_color: ['light_blue', 'gray', 'navy', 'white', 'beige', 'pink', 'green'],
+    accessory: [null, null, 'earrings', 'glasses'], // null を2つ入れて、何も付けない人を多めにする
+  },
+  male: {
+    hair: ['short', 'short_messy'],
+    hair_color: ['black', 'dark_brown', 'brown', 'light_brown', 'ash'],
+    eyes: ['round', 'narrow', 'droopy'],
+    clothes: ['shirt', 'hoodie', 'cardigan', 'tshirt'],
+    clothes_color: ['light_blue', 'gray', 'navy', 'white', 'beige', 'green'],
+    accessory: [null, null, 'glasses'],
+  },
+}
+
+const pick = (list, random) => list[Math.floor(random() * list.length)]
+
+/** 前回と同じものは続けないで、ランダムに選ぶ（候補が1つしかなければ、それ） */
+function pickNew(list, last, random = Math.random) {
+  const rest = list.filter((item) => item !== last)
+  return pick(rest.length ? rest : list, random)
+}
+
+function randomLook(gender, random = Math.random) {
+  return Object.fromEntries(Object.entries(LOOKS[gender] ?? LOOKS.female).map(([key, values]) => [key, pick(values, random)]))
+}
+
+/** 文の中の {name} を名前に置きかえる（入れ子の中の文字列も全部）。元のデータは変えない */
+function fillName(value, name) {
+  if (typeof value === 'string') return value.replaceAll(NAME_SLOT, name)
+  if (Array.isArray(value)) return value.map((item) => fillName(item, name))
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fillName(item, name)]))
+  }
+  return value
+}
+
+/** {name} 以外の {…}（書きまちがい）。データの点検用 */
+function unknownSlots(value) {
+  const found = new Set()
+  const walk = (item) => {
+    if (typeof item === 'string') {
+      for (const [slot] of item.matchAll(/\{[^{}]*\}/g)) if (slot !== NAME_SLOT) found.add(slot)
+    } else if (item && typeof item === 'object') {
+      for (const child of Object.values(item)) walk(child)
+    }
+  }
+  walk(value)
+  return [...found]
+}
+
+/** 1タイプの話を、遊べる話の形にする。題・段階・同性／異性はお話のもの */
+function storyEpisode(story, variant) {
+  return { ...variant, title: story.title, tier: story.tier, pairing: story.pairing, character: story.id }
+}
+
+/** その回の相手。name・look・age は始めるときに決めたもの。会う場面のセリフの who は、お話の id */
+function characterFor(story, variant, { name, look = null, age = null }) {
+  return {
+    id: story.id,
+    name,
+    gender: story.gender,
+    age,
+    type: variant.type,
+    stars: variant.stars,
+    switches: variant.switches ?? [],
+    style: variant.style,
+    icon_text: [...name][0],
+    look,
+  }
+}
+
+/**
+ * お話を始める。タイプ（variants から）・名前（names.json の相手の性別から）・見た目を決めて、
+ * 今までの話と同じ { episode, character } を作る（story も添える）。
+ * last: このお話で前回会った相手 { type, name }。同じタイプ・同じ名前は続けて出さない
+ */
+function castStory({ story, variants, names, last = null, random = Math.random }) {
+  const variant = pickNew(variants, variants.find((item) => item.type === last?.type), random)
+  const name = pickNew(names?.[story.gender] ?? [], last?.name, random) ?? story.relation
+  const [low, high] = story.age ?? []
+  const age = low == null ? null : low + Math.floor(random() * (high - low + 1))
+  const look = randomLook(story.gender, random)
+  const filled = fillName(variant, name)
+  return {
+    story,
+    episode: storyEpisode(story, filled),
+    character: characterFor(story, filled, { name, look, age }),
+  }
+}
+
+return { NAME_SLOT, LOOKS, pickNew, randomLook, fillName, unknownSlots, storyEpisode, characterFor, castStory }
+})()
 // ---- js/data.js
 __modules["js/data.js"] = (() => {
 // content/ の JSON を読む。会話の中身はすべてここから（04 §3・§11、06 §6）
@@ -612,6 +745,7 @@ __modules["js/data.js"] = (() => {
 
 const { BUNDLE } = __modules["js/build-info.js"]
 const { PAIRING_FIELDS, scenesOf, stepFor } = __modules["js/rules.js"]
+const { characterFor, storyEpisode, unknownSlots } = __modules["js/stories.js"]
 
 const cache = new Map()
 const TIER_IDS = ['beginner', 'intermediate', 'advanced']
@@ -648,14 +782,22 @@ function loadJSON(path) {
 
 /** まとめたデータ（tools/build.mjs が作る）を、1つずつ読んだときと同じ形にする */
 function gameFromBundle(bundle) {
-  const entries = bundle.index.episodes.map(({ id }) => {
-    const episode = bundle.episodes[id]
+  const entries = bundle.index.episodes.map((item) => {
+    if (item.story) {
+      const story = bundle.stories[item.story]
+      return { story, variants: story.variants.map((id) => bundle.episodes[id]) }
+    }
+    const episode = bundle.episodes[item.id]
     return { episode, character: bundle.characters[episode.character] }
   })
-  return { index: bundle.index, rules: bundle.rules, types: bundle.types, art: bundle.art ?? NO_ART, entries }
+  return { index: bundle.index, rules: bundle.rules, types: bundle.types, art: bundle.art ?? NO_ART, names: bundle.names ?? null, entries }
 }
 
-/** 遊べる話を全部読む（ホームに並べるため） */
+/**
+ * 遊べる話を全部読む（ホームに並べるため）。index.json に並ぶのは、2つの形:
+ *   { id }    固定の人の話 → { episode, character }
+ *   { story } お話（06 §6.6。相手は毎回ちがう）→ { story, variants: [タイプごとの話] }
+ */
 async function loadGame() {
   if (BUNDLE) return gameFromBundle(await fetchJSON(BUNDLE))
   const [index, rules, types, art] = await Promise.all([
@@ -664,14 +806,24 @@ async function loadGame() {
     loadJSON('content/types.json'),
     loadJSON('content/art.json').catch(() => NO_ART), // 画像に差し替えていなければ、なくてよい
   ])
-  const entries = await Promise.all(index.episodes.map((item) => loadEpisode(item.id)))
-  return { index, rules, types, art, entries }
+  const hasStories = index.episodes.some((item) => item.story)
+  const [names, entries] = await Promise.all([
+    hasStories ? loadJSON('content/names.json') : null,
+    Promise.all(index.episodes.map((item) => (item.story ? loadStory(item.story) : loadEpisode(item.id)))),
+  ])
+  return { index, rules, types, art, names, entries }
 }
 
 async function loadEpisode(id) {
   const episode = await loadJSON(`content/episodes/${id}.json`)
   const character = await loadJSON(`content/characters/${episode.character}.json`)
   return { episode, character }
+}
+
+async function loadStory(id) {
+  const story = await loadJSON(`content/stories/${id}.json`)
+  const variants = await Promise.all(story.variants.map((variant) => loadJSON(`content/episodes/${variant}.json`)))
+  return { story, variants }
 }
 
 /**
@@ -828,6 +980,58 @@ function validateEpisode({ episode, character }, { rules, types, backgrounds = n
   return [...new Set(problems)]
 }
 
+/**
+ * お話の点検（06 §6.6）。お話のファイルと、タイプごとの話を、そのタイプ・★の仮のキャラで validateEpisode する
+ * names: names.json（相手の名前の候補）
+ */
+function validateStory({ story, variants }, { rules, types, names, backgrounds = null, episodeIds = null }) {
+  const problems = []
+  const problem = (message) => problems.push(`${story.id}: ${message}`)
+
+  for (const key of ['title', 'summary', 'relation']) {
+    if (!story[key]) problem(`${key} がない`)
+    else if (/[{}]/.test(story[key])) problem(`${key} に {name} は書けない（ホームでは、相手がまだ決まっていない）`)
+  }
+  if (!TIER_IDS.includes(story.tier)) problem(`tier「${story.tier}」は ${TIER_IDS.join(' / ')}`)
+  if (!['any', 'opposite'].includes(story.pairing)) problem(`pairing「${story.pairing}」は any / opposite`)
+  if (!['female', 'male'].includes(story.gender)) problem(`gender「${story.gender}」は female / male`)
+  else if ((names?.[story.gender] ?? []).length < 2) problem(`names.json の ${story.gender} の名前が2つより少ない（前回と同じ名前を続けないため）`)
+  if (story.age && !(story.age.length === 2 && story.age[0] <= story.age[1])) problem('age は [いちばん下, いちばん上] の形')
+  const ids = story.variants ?? []
+  if (ids.length < 2) problem('variants が2つより少ない（前回と同じタイプを続けないため）')
+  ids.forEach((id, i) => {
+    if (!variants[i]) problem(`variants の ${id} がない`)
+  })
+
+  const present = variants.filter(Boolean)
+  for (const variant of present) {
+    if (variant.story !== story.id) problem(`${variant.id} の story が「${variant.story}」（${story.id} にする）`)
+    if (variant.character) problem(`${variant.id} に character は書かない（相手は始めるときに決まる）`)
+  }
+  const typeIds = present.map((variant) => variant.type)
+  const repeated = [...new Set(typeIds.filter((id, i) => typeIds.indexOf(id) !== i))]
+  if (repeated.length) problem(`タイプが重なっている（${repeated.join('・')}）`)
+  // 4タイプなら、どの軸も2対2に分ける（推理であてずっぽうが効かないように）
+  const known = typeIds.map((id) => types.types.find((type) => type.id === id)).filter(Boolean)
+  if (known.length === 4) {
+    for (const axis of Object.keys(types.axes)) {
+      const same = known.filter((type) => type[axis] === known[0][axis]).length
+      if (same !== 2) problem(`${axis} の軸が2対2に分かれていない`)
+    }
+  }
+
+  for (const variant of present) {
+    const episode = storyEpisode(story, variant)
+    const character = characterFor(story, variant, { name: '（名前）' })
+    problems.push(...validateEpisode({ episode, character }, { rules, types, backgrounds, episodeIds }))
+    for (const slot of unknownSlots(variant)) problems.push(`${variant.id}: ${slot} は置きかえられない（相手の名前は {name}）`)
+    for (const type of types.types) {
+      if (variant.intro?.includes(type.name)) problems.push(`${variant.id}: 紹介文にタイプの名前（${type.name}）が出ている`)
+    }
+  }
+  return [...new Set(problems)]
+}
+
 const PAIRING_NAMES = { same: '同性', opposite: '異性' }
 
 /** その手の手がかりの軸（cues と cues_after_miss）。並べて返す */
@@ -835,7 +1039,7 @@ function cueAxes(step) {
   return [...new Set([...(step.cues ?? []), ...(step.cues_after_miss ?? [])].map((cue) => cue.axis))].sort()
 }
 
-return { fetchJSON, loadJSON, gameFromBundle, loadGame, loadEpisode, validateEpisode }
+return { fetchJSON, loadJSON, gameFromBundle, loadGame, loadEpisode, loadStory, validateEpisode, validateStory }
 })()
 // ---- js/report.js
 __modules["js/report.js"] = (() => {
@@ -848,8 +1052,9 @@ const VARIANTS = { same: '同性', opposite: '異性', base: '元の手' }
 
 /**
  * guess: null（スキップ）/ { kind: 'type', answers: { A: 'near', … } } / { kind: 'gap', option: 'a' }
+ * story・met: お話（06 §6.6）のときだけ。相手は毎回ちがうので、そのタイプと名前を残す
  */
-function buildReport({ rules, types, episode, character, play, saved, guess, playMs, playerGender }) {
+function buildReport({ rules, types, episode, character, story = null, met = null, play, saved, guess, playMs, playerGender }) {
   const { record, isFirst } = saved
   const first = record.first ?? { score: play.score }
   const tier = TIERS[episode.tier]
@@ -858,9 +1063,11 @@ function buildReport({ rules, types, episode, character, play, saved, guess, pla
   const picks = play.steps.map(({ step, choice }) => `${step.id}-${choice.id}${markOf(choice, rules)}`).join(' ')
   const ended = play.endReason ? `（${play.steps.length}手目で終了）` : ''
   const swapped = play.steps.find(({ variant }) => variant) // 同性・異性で入れかわる手（そこまで進んだとき）
+  const typeName = types.types.find((type) => type.id === character.type)?.name ?? character.type
   return [
     '【男女心 試作テスト】',
     `話: ${character.name}「${episode.title}」${tier ? `（${tier}）` : ''}`,
+    story ? `相手: ${typeName}（★${character.stars}）${met ? `・このお話で会ったタイプ ${met.count}/${met.total}` : ''}` : null,
     `あなた: ${GENDERS[playerGender] ?? GENDERS.none}${pairing ? `（${PAIRINGS[pairing]}）` : ''}`,
     `初見スコア: ${first.score}（${rankFor(first.score, rules).label}） / 今回: ${now}`,
     `選んだ返事: ${picks}${ended}`,
@@ -1004,6 +1211,7 @@ function memoryStorage() {
 
 function createStore(storage) {
   const keyOf = (episodeId) => `${PREFIX}episode:${episodeId}`
+  const storyKeyOf = (storyId) => `${PREFIX}story:${storyId}`
   const playerKey = `${PREFIX}player`
 
   function readJSON(key) {
@@ -1026,27 +1234,59 @@ function createStore(storage) {
     return readJSON(keyOf(episodeId)) ?? { plays: 0, best: null, first: null }
   }
 
+  /** お話の記録（06 §6.6）。read の形に、会ったタイプ（met）と前回の相手（last: { type, name }）を足したもの */
+  function readStory(storyId) {
+    return { plays: 0, best: null, first: null, met: [], last: null, ...readJSON(storyKeyOf(storyId)) }
+  }
+
+  /** 最後まで遊んだ1回を数える。初見（1回目）は上書きしない。extra は1回目の記録に足すもの */
+  function countPlay(record, play, extra = {}) {
+    const isFirst = !record.first
+    if (isFirst) {
+      record.first = {
+        score: play.score,
+        // 本音の間の分析（leans の集計）用に、1回目に選んだ返事の id を残す。
+        // 入れかわる手は、どれを出したか（same / opposite / base＝元の手）も残す
+        choices: play.steps.map(({ step, choice, variant }) => ({ step: step.id, id: choice.id, ...(variant ? { variant } : {}) })),
+        end: play.endReason,
+        at: new Date().toISOString(),
+        ...extra,
+      }
+    }
+    record.best = record.best == null ? play.score : Math.max(record.best, play.score)
+    record.plays += 1
+    return isFirst
+  }
+
   return {
     read,
+    readStory,
 
     /** 最後まで遊んだ1回を記録する。初見（1回目）は上書きしない */
     recordPlay(episodeId, play) {
       const record = read(episodeId)
-      const isFirst = !record.first
-      if (isFirst) {
-        record.first = {
-          score: play.score,
-          // 本音の間の分析（leans の集計）用に、1回目に選んだ返事の id を残す。
-          // 入れかわる手は、どれを出したか（same / opposite / base＝元の手）も残す
-          choices: play.steps.map(({ step, choice, variant }) => ({ step: step.id, id: choice.id, ...(variant ? { variant } : {}) })),
-          end: play.endReason,
-          at: new Date().toISOString(),
-        }
-      }
-      record.best = record.best == null ? play.score : Math.max(record.best, play.score)
-      record.plays += 1
+      const isFirst = countPlay(record, play)
       writeJSON(keyOf(episodeId), record)
       return { isFirst, record }
+    },
+
+    /** お話を最後まで遊んだ1回を記録する。1回目の記録には相手のタイプと名前も残し、次は同じ相手を続けない */
+    recordStoryPlay(storyId, play, { type, name }) {
+      const record = readStory(storyId)
+      const isFirst = countPlay(record, play, { type, name })
+      record.last = { type, name }
+      writeJSON(storyKeyOf(storyId), record)
+      return { isFirst, record }
+    },
+
+    /** 種明かしで会ったタイプを数える。会ったタイプの一覧を返す */
+    meetType(storyId, type) {
+      const record = readStory(storyId)
+      if (!record.met.includes(type)) {
+        record.met = [...record.met, type]
+        writeJSON(storyKeyOf(storyId), record)
+      }
+      return record.met
     },
 
     /** プレイヤーの設定: { gender: 'male' | 'female' | 'none' } */
@@ -1700,27 +1940,43 @@ __modules["js/screens/home.js"] = (() => {
 const { GENDERS, PAIRINGS, TABS, homeCards } = __modules["js/catalog.js"]
 const { characterAvatar, h, tierBadge } = __modules["js/ui.js"]
 
-function homeScreen({ entries, tab, playerGender, recordOf, onTab, onOpen, onChangeGender }) {
-  const cards = homeCards({ entries, tab, playerGender, recordOf })
+function homeScreen({ entries, tab, playerGender, recordOf, storyRecordOf, onTab, onOpen, onChangeGender }) {
+  const cards = homeCards({ entries, tab, playerGender, recordOf, storyRecordOf })
+  const pairBadge = (c) => (c.pairing ? h('span', { class: `badge pair pair-${c.pairing}`, text: PAIRINGS[c.pairing] }) : null)
 
   const cardNode = (c) => h('button', {
     class: `ep-card${c.locked ? ' locked' : ''}`,
     type: 'button',
     disabled: c.locked,
-    onClick: () => onOpen(c.episode.id),
+    onClick: () => onOpen(c.entry),
   },
     characterAvatar(c.character, 'md'),
     h('span', { class: 'ep-body' },
       h('span', { class: 'ep-top' },
         h('span', { class: 'ep-name', text: c.character.name }),
         tierBadge(c.episode.tier, c.tier),
-        c.pairing ? h('span', { class: `badge pair pair-${c.pairing}`, text: PAIRINGS[c.pairing] }) : null,
+        pairBadge(c),
       ),
       h('span', { class: 'ep-title', text: c.episode.title }),
       c.locked
         ? h('span', { class: 'ep-lock', text: `🔒 ${c.lockText}` })
         : h('span', { class: 'ep-relation', text: c.relation }),
       !c.locked && c.best != null ? h('span', { class: 'ep-best', text: `最高 ${c.best}点` }) : null,
+    ),
+  )
+
+  // お話（06 §6.6）: 相手は始めるときに決まるので、名前も顔も出さない
+  const storyNode = (c) => h('button', { class: 'ep-card story', type: 'button', onClick: () => onOpen(c.entry) },
+    characterAvatar({ id: c.story.id, name: '？', icon_text: '？' }, 'md'),
+    h('span', { class: 'ep-body' },
+      h('span', { class: 'ep-top' },
+        h('span', { class: 'ep-who', text: '相手は毎回かわる' }),
+        tierBadge(c.story.tier, c.tier),
+        pairBadge(c),
+      ),
+      h('span', { class: 'ep-title', text: c.story.title }),
+      h('span', { class: 'ep-relation', text: c.summary }),
+      c.best != null ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}` }) : null,
     ),
   )
 
@@ -1742,7 +1998,9 @@ function homeScreen({ entries, tab, playerGender, recordOf, onTab, onOpen, onCha
       }, item.label)),
     ),
     h('div', { class: 'home-list' },
-      cards.length ? cards.map(cardNode) : h('p', { class: 'fine home-empty', text: 'まだ遊べる話がありません' }),
+      cards.length
+        ? cards.map((c) => (c.story ? storyNode(c) : cardNode(c)))
+        : h('p', { class: 'fine home-empty', text: 'まだ遊べる話がありません' }),
     ),
     h('p', { class: 'fine home-foot', text: '記録はこの端末のブラウザの中にだけ残ります。' }),
   )
@@ -1762,11 +2020,12 @@ const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮'
 const stepNumber = (id) => CIRCLED[id - 1] ?? `${id}.`
 const STAR_LABELS = { 1: '余裕あり', 2: 'ふつう', 3: '余裕なし' } // 心の余裕（設計書 §3.3）
 
-function resultScreen({ episode, character, rules, types, play, saved, guess, onRetry, onHome, onCopy }) {
+/** met: お話で会ったタイプの数 { count, total }（06 §6.6）。固定の人の話なら null */
+function resultScreen({ episode, character, rules, types, play, saved, guess, met = null, onRetry, onHome, onCopy }) {
   const type = types.types.find((t) => t.id === character.type)
   const axes = Object.entries(types.axes)
   const result = episode.result ?? {}
-  const ctx = { episode, character, rules, types, type, axes }
+  const ctx = { episode, character, rules, types, type, axes, met }
 
   return h('section', { class: 'screen result' },
     scorePart(ctx, play, saved),
@@ -1809,8 +2068,8 @@ function scorePart({ episode, character, rules }, play, saved) {
   )
 }
 
-// 2. タイプの種明かし（心の余裕の★と、ギャップも）
-function typePart({ episode, character, type, axes }) {
+// 2. タイプの種明かし（心の余裕の★と、ギャップも。お話なら、会ったタイプの数も）
+function typePart({ episode, character, type, axes, met }) {
   const section = card(`${character.name}のタイプは……`,
     h('p', { class: 'type-name', text: type.name }),
     h('p', { class: 'type-catch', text: type.catch }),
@@ -1821,6 +2080,7 @@ function typePart({ episode, character, type, axes }) {
     h('p', { class: 'type-stars' },
       '心の余裕 ', stars(character.stars), `（${STAR_LABELS[character.stars] ?? ''}）`,
     ),
+    met ? h('p', { class: 'type-met', text: `このお話で会ったタイプ ${met.count}/${met.total}` }) : null,
     gapPart({ episode, character, type, axes }),
   )
   section.classList.add('reveal')
@@ -2048,10 +2308,11 @@ __modules["js/main.js"] = (() => {
 
 const { BACKGROUND_IDS, lookProblems, setArtImages } = __modules["js/art/index.js"]
 const { TIERS, defaultTab, pairingOf } = __modules["js/catalog.js"]
-const { loadGame, validateEpisode } = __modules["js/data.js"]
+const { loadGame, validateEpisode, validateStory } = __modules["js/data.js"]
 const { buildReport } = __modules["js/report.js"]
 const { runEpisode } = __modules["js/runner.js"]
 const { browserStorage, createStore } = __modules["js/store.js"]
+const { castStory } = __modules["js/stories.js"]
 const { copyText, h, toast } = __modules["js/ui.js"]
 const { setSpeed, skipWaits } = __modules["js/wait.js"]
 const { createConversation } = __modules["js/views/conversation.js"]
@@ -2081,9 +2342,10 @@ document.addEventListener('keydown', (event) => {
   if (skipWaits() > 0) event.preventDefault()
 })
 
-let game // { index, rules, types, art, entries: [{ episode, character }] }
+let game // { index, rules, types, art, names, entries: [{ episode, character } または お話 { story, variants }] }
 let homeTab = null // ホームで開いているタブ（相手の性別）
-let session // いまのプレイ: { entry, startedAt, play, saved, guess, playMs }
+// いまのプレイ: { source（ホームで選んだもの）, entry（遊ぶ { episode, character, story? }）, startedAt, play, saved, guess, playMs, met }
+let session
 
 function show(screen, { guard = true } = {}) {
   root.replaceChildren(screen)
@@ -2097,7 +2359,6 @@ function show(screen, { guard = true } = {}) {
 }
 
 const playerGender = () => store.player().gender ?? 'none'
-const entryOf = (id) => game.entries.find((entry) => entry.episode.id === id)
 
 async function boot() {
   try {
@@ -2114,12 +2375,13 @@ async function boot() {
 
 /** データと絵の点検。おかしな所はコンソールに出す */
 function checkContent() {
-  const episodeIds = game.entries.map((entry) => entry.episode.id)
+  const episodeIds = game.entries.filter((entry) => entry.episode).map((entry) => entry.episode.id)
+  const options = { rules: game.rules, types: game.types, names: game.names, backgrounds: BACKGROUND_IDS, episodeIds }
   for (const entry of game.entries) {
-    const problems = validateEpisode(entry, { rules: game.rules, types: game.types, backgrounds: BACKGROUND_IDS, episodeIds })
+    const problems = entry.story ? validateStory(entry, options) : validateEpisode(entry, options)
     for (const problem of problems) console.warn(`[content] ${problem}`)
   }
-  for (const character of new Set(game.entries.map((entry) => entry.character))) {
+  for (const character of new Set(game.entries.filter((entry) => entry.character).map((entry) => entry.character))) {
     for (const problem of lookProblems(character.look)) console.warn(`[art] ${character.id}: ${problem}`)
   }
 }
@@ -2147,27 +2409,36 @@ function showHome({ guard = true } = {}) {
     tab: homeTab,
     playerGender: playerGender(),
     recordOf: (id) => store.read(id),
+    storyRecordOf: (id) => store.readStory(id),
     onTab: (tab) => {
       homeTab = tab
       showHome({ guard: false })
     },
-    onOpen: (id) => showIntro(entryOf(id)),
+    onOpen: openEntry,
     onChangeGender: showGender,
   }), { guard })
 }
 
-function showIntro(entry) {
+/** ホームで選んだ話を開く。お話なら、ここで相手（タイプ・名前・見た目）が決まる（06 §6.6） */
+function openEntry(source) {
+  const entry = source.story
+    ? castStory({ ...source, names: game.names, last: store.readStory(source.story.id).last })
+    : source
+  showIntro(entry, source)
+}
+
+function showIntro(entry, source) {
   homeTab = entry.character.gender
   show(introScreen({
     ...entry,
     tierLabel: TIERS[entry.episode.tier],
-    onStart: () => startConversation(entry),
+    onStart: () => startConversation(entry, source),
     onBack: () => showHome(),
   }))
 }
 
-async function startConversation(entry) {
-  session = { entry, startedAt: Date.now() }
+async function startConversation(entry, source) {
+  session = { source, entry, startedAt: Date.now() }
   const conversation = createConversation(entry)
   show(conversation.el)
   session.play = await runEpisode({
@@ -2176,8 +2447,11 @@ async function startConversation(entry) {
     director: conversation,
     pairing: pairingOf(playerGender(), entry.character.gender), // 同性・異性で1手だけ入れかわる
   })
-  // 会話を最後まで（0点で途中終了も含む）終えた時点で記録する
-  session.saved = store.recordPlay(entry.episode.id, session.play)
+  // 会話を最後まで（0点で途中終了も含む）終えた時点で記録する。お話は、お話ごとに記録する
+  const { story, character } = entry
+  session.saved = story
+    ? store.recordStoryPlay(story.id, session.play, { type: character.type, name: character.name })
+    : store.recordPlay(entry.episode.id, session.play)
   await conversation.showEnd(entry.episode.guess === 'gap' ? 'ギャップ推理へ' : 'タイプ推理へ')
   show(guessScreen({
     ...entry,
@@ -2192,6 +2466,9 @@ async function startConversation(entry) {
 function showResult() {
   // プレイ時間は S3 の[会話をはじめる]から、結果が最初に出るまで
   session.playMs ??= Date.now() - session.startedAt
+  // お話で会ったタイプは、種明かし（この画面）で数える
+  const { story, character } = session.entry
+  session.met ??= story ? { count: store.meetType(story.id, character.type).length, total: story.variants.length } : null
   show(resultScreen({
     ...session.entry,
     rules: game.rules,
@@ -2199,7 +2476,8 @@ function showResult() {
     play: session.play,
     saved: session.saved,
     guess: session.guess,
-    onRetry: () => showIntro(session.entry),
+    met: session.met,
+    onRetry: () => openEntry(session.source), // お話なら、また新しい相手になる
     onHome: () => showHome(),
     onCopy: copyReport,
   }))
@@ -2213,6 +2491,7 @@ async function copyReport() {
     play: session.play,
     saved: session.saved,
     guess: session.guess,
+    met: session.met,
     playMs: session.playMs,
     playerGender: playerGender(),
   })

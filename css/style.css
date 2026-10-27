@@ -239,6 +239,7 @@ button { font: inherit; color: inherit; }
 .ep-body { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
 .ep-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ep-name { font-weight: 800; }
+.ep-who { font-size: 12px; font-weight: 700; color: var(--muted); }
 .ep-title { margin-top: 2px; font-size: 17px; font-weight: 800; line-height: 1.4; }
 .ep-relation, .ep-lock { font-size: 13px; line-height: 1.6; color: var(--ink-2); }
 .ep-lock { color: var(--muted); }
@@ -512,6 +513,7 @@ button { font: inherit; color: inherit; }
 .axis dt { font-size: 11px; color: var(--muted); }
 .axis dd { font-weight: 800; }
 .type-stars { margin-top: 12px; font-size: 13px; color: var(--ink-2); }
+.type-met { margin-top: 6px; font-size: 13px; font-weight: 700; color: var(--accent-strong); }
 .gap-reveal { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: #fff6e5; }
 .gap-title { font-size: 12px; font-weight: 800; color: #8a5a00; }
 .gap-text { margin-top: 2px; font-weight: 800; line-height: 1.6; }
