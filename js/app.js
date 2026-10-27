@@ -454,14 +454,27 @@ function genderOf(entry) {
 }
 
 /**
- * タブに並べる話のカード
- * @param entries        index.json の順。固定の人の話 { episode, character } と、お話 { story, variants }
- * @param recordOf       (episodeId) => { plays, best }
- * @param storyRecordOf  (storyId) => { plays, best, met }
+ * 相手が毎回ちがう遊び方の記録の名前（store.readSeries に渡す）。固定の人の話は null。
+ * お話は 'story:<お話ID>'、毎回初見（07）は 'free'
  */
-function homeCards({ entries, tab, playerGender, recordOf, storyRecordOf = () => ({ plays: 0, best: null, met: [] }) }) {
+function seriesOf(entry) {
+  if (entry.story) return `story:${entry.story.id}`
+  return entry.free ? 'free' : null
+}
+
+const NO_SERIES = { plays: 0, best: null, met: [], guessed: 0, perfect: 0 }
+
+/**
+ * タブに並べる話のカード
+ * @param entries         index.json の順。固定の人の話 { episode, character } と、お話 { story, variants }
+ * @param recordOf        (episodeId) => { plays, best }
+ * @param seriesRecordOf  (seriesOf の名前) => { plays, best, met, guessed, perfect }
+ * @param free            毎回初見モード（07）があれば { total: タイプの数 }。各タブのいちばん上にカードを出す
+ */
+function homeCards({ entries, tab, playerGender, recordOf, seriesRecordOf = () => NO_SERIES, free = null }) {
   const byId = new Map(entries.filter((entry) => entry.episode).map((entry) => [entry.episode.id, entry]))
-  return entries
+  const freeCards = free ? [freeCard({ tab, playerGender, total: free.total, record: seriesRecordOf('free') })] : []
+  return [...freeCards, ...entries
     .filter((entry) => genderOf(entry) === tab)
     .map((entry) => {
       const { episode, character, story } = entry
@@ -475,7 +488,7 @@ function homeCards({ entries, tab, playerGender, recordOf, storyRecordOf = () =>
       }
       if (story) {
         // お話のカードには名前を出さない（始めるときに相手が決まる）。題と一言の説明だけ
-        const record = storyRecordOf(story.id)
+        const record = seriesRecordOf(seriesOf(entry))
         return {
           ...base,
           id: story.id,
@@ -505,15 +518,34 @@ function homeCards({ entries, tab, playerGender, recordOf, storyRecordOf = () =>
         relation: (episode.intro ?? '').split('\n')[0],
       }
     })
-    .filter((card) => !card.hidden)
+    .filter((card) => !card.hidden)]
 }
 
-return { TIERS, GENDERS, PAIRINGS, TABS, pairingOf, defaultTab, genderOf, homeCards }
+/** 毎回初見（07）のカード。相手の性別はタブで決まり、記録は両方のタブで1つ */
+function freeCard({ tab, playerGender, total, record }) {
+  return {
+    id: 'free',
+    entry: { free: true, gender: tab },
+    free: true,
+    pairing: pairingOf(playerGender, tab),
+    tier: TIERS.beginner,
+    hidden: false,
+    locked: false,
+    lockText: null,
+    best: record.best,
+    met: record.met?.length ?? 0,
+    total,
+    guessed: record.guessed ?? 0,
+    perfect: record.perfect ?? 0,
+  }
+}
+
+return { TIERS, GENDERS, PAIRINGS, TABS, pairingOf, defaultTab, genderOf, seriesOf, homeCards }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=f3ac25d8ae"
+const BUNDLE = "content/bundle.json?v=c66fa00731"
 
 return { BUNDLE }
 })()
@@ -671,24 +703,33 @@ function randomLook(gender, random = Math.random) {
   return Object.fromEntries(Object.entries(LOOKS[gender] ?? LOOKS.female).map(([key, values]) => [key, pick(values, random)]))
 }
 
-/** 文の中の {name} を名前に置きかえる（入れ子の中の文字列も全部）。元のデータは変えない */
-function fillName(value, name) {
-  if (typeof value === 'string') return value.replaceAll(NAME_SLOT, name)
-  if (Array.isArray(value)) return value.map((item) => fillName(item, name))
+/** 文の中の {キー} を words の言葉に置きかえる（入れ子の中の文字列も全部）。元のデータは変えない */
+function fillSlots(value, words) {
+  if (typeof value === 'string') {
+    return value.replace(/\{(\w+)\}/g, (slot, key) => (Object.prototype.hasOwnProperty.call(words, key) ? words[key] : slot))
+  }
+  if (Array.isArray(value)) return value.map((item) => fillSlots(item, words))
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fillName(item, name)]))
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fillSlots(item, words)]))
   }
   return value
 }
 
-/** {name} 以外の {…}（書きまちがい）。データの点検用 */
-function unknownSlots(value) {
+/** 文の中の {name} を名前に置きかえる */
+function fillName(value, name) {
+  return fillSlots(value, { name })
+}
+
+/** 置きかえられない {…}（書きまちがい）。known は置きかえられるもの。_note など _ で始まる項目は見ない。データの点検用 */
+function unknownSlots(value, known = [NAME_SLOT]) {
   const found = new Set()
   const walk = (item) => {
     if (typeof item === 'string') {
-      for (const [slot] of item.matchAll(/\{[^{}]*\}/g)) if (slot !== NAME_SLOT) found.add(slot)
+      for (const [slot] of item.matchAll(/\{[^{}]*\}/g)) if (!known.includes(slot)) found.add(slot)
+    } else if (Array.isArray(item)) {
+      for (const child of item) walk(child)
     } else if (item && typeof item === 'object') {
-      for (const child of Object.values(item)) walk(child)
+      for (const [key, child] of Object.entries(item)) if (!key.startsWith('_')) walk(child)
     }
   }
   walk(value)
@@ -735,7 +776,186 @@ function castStory({ story, variants, names, last = null, random = Math.random }
   }
 }
 
-return { NAME_SLOT, LOOKS, pickNew, randomLook, fillName, unknownSlots, storyEpisode, characterFor, castStory }
+return { NAME_SLOT, LOOKS, pickNew, randomLook, fillSlots, fillName, unknownSlots, storyEpisode, characterFor, castStory }
+})()
+// ---- js/free.js
+__modules["js/free.js"] = (() => {
+// 毎回初見モード（07）。会話を部品（content/free/）から、その場で組み立てる。画面には触らない。
+// 組み立てたものは今までの話と同じ形（4手）なので、会話・推理・結果の画面はそのまま使える。
+//   scenes.json  場面と返事の型（核＝試す軸を分け合う型、おまけ＝best にならない型）
+//   topics.json  題材（{event} などの言葉）・関係・時間帯
+//   types/<タイプ>.json  タイプごとの話し方（相手のセリフ・手がかり・反応・昨日のやりとり）
+
+const { bestChoice, shuffle } = __modules["js/rules.js"]
+const { NAME_SLOT, fillSlots, pickNew, randomLook } = __modules["js/stories.js"]
+
+const FREE_ID = 'free'
+const TOPIC_INFO = ['id', 'title', 'kind'] // 題材のうち、文に入れる言葉ではない項目
+
+/** 題材の言葉（{event}・{treat} など）。題材の id・title・kind 以外の項目 */
+function wordsOf(topic) {
+  return Object.fromEntries(Object.entries(topic).filter(([key]) => !TOPIC_INFO.includes(key) && !key.startsWith('_')))
+}
+
+/** 文の中で使える {…}: {name} と、題材の言葉（どれかの題材にあるもの） */
+function slotsOf(topics) {
+  const keys = new Set((topics?.topics ?? []).flatMap((topic) => Object.keys(wordsOf(topic))))
+  return [NAME_SLOT, ...[...keys].map((key) => `{${key}}`)]
+}
+
+const pick = (list, random) => list[Math.floor(random() * list.length)]
+
+// 相手の心の余裕。4手しかないので★2の減点にする（★1だと、でたらめに選んでも平均85点になる。07 §5）
+const FREE_STARS = 2
+
+/**
+ * 核の点数と解説（07 §5）。fit の軸がぜんぶ相手と同じ → best、いくつか同じ → good、
+ * ひとつも同じでない → miss_grade（なければ weak）。best 以外は、ずれた軸ごとに axis_hints を足す
+ */
+function gradeCore(core, type, hints = {}) {
+  const axes = Object.keys(core.fit ?? {})
+  const missed = axes.filter((axis) => type[axis] !== core.fit[axis])
+  if (!missed.length) return { grade: 'best', note: core.note?.best ?? '' }
+  const grade = missed.length < axes.length ? 'good' : core.miss_grade ?? 'weak'
+  const note = [core.note?.what, ...missed.map((axis) => hints[axis]?.[type[axis]])].filter(Boolean).join('。')
+  return { grade, note }
+}
+
+/** おまけの点数と解説。grade_by があれば、その軸の相手の極で決まる */
+function gradeExtra(extra, type) {
+  const pole = extra.grade_by ? type[extra.grade_by.axis] : null
+  const grade = extra.grade_by ? extra.grade_by[pole] : extra.grade
+  const note = typeof extra.note === 'string' ? extra.note : extra.note?.[pole] ?? ''
+  return { grade, note }
+}
+
+/** 反応の種類。best・good 以外（weak・bad・mine）は miss */
+const outcomeOf = (grade) => (grade === 'best' || grade === 'good' ? grade : 'miss')
+
+function buildStep({ sceneId, index, free, part, type, fill, random }) {
+  const scene = free.scenes.scenes[sceneId]
+  const talk = part.scenes[sceneId]
+  // 相手のセリフ。cues の line（何行目か）は、今までの話と同じくセリフの文にする
+  const say = (variant) => {
+    const lines = variant.lines.map(fill)
+    return { lines, cues: (variant.cues ?? []).map((cue) => ({ axis: cue.axis, line: lines[cue.line], text: fill(cue.text) })) }
+  }
+  const opening = say(pick(talk.partner, random))
+  const afterMiss = index > 0 && talk.after_miss?.length ? say(pick(talk.after_miss, random)) : null
+
+  const reaction = (grade) => {
+    const variants = talk.reactions?.[outcomeOf(grade)] ?? []
+    return (variants.length ? pick(variants, random) : []).map((text) => ({ text: fill(text) }))
+  }
+  const choiceOf = (form, { grade, note }) => ({
+    id: form.id,
+    text: fill(pick(form.lines, random)),
+    grade,
+    leans: form.leans ?? {},
+    reaction: reaction(grade),
+    note: fill(note),
+    ...(form.send_as ? { send_as: form.send_as, sticker: form.sticker } : {}),
+  })
+  // 選択肢は4つ: 核の全部 ＋ おまけからランダムに残りの数（報告は核4つ、ほかは核2つ＋おまけ2つ）
+  const extras = shuffle(scene.extras ?? [], random).slice(0, Math.max(0, 4 - scene.cores.length))
+  const choices = [
+    ...scene.cores.map((core) => choiceOf(core, gradeCore(core, type, free.scenes.axis_hints))),
+    ...extras.map((extra) => choiceOf(extra, gradeExtra(extra, type))),
+  ]
+
+  return {
+    id: index + 1,
+    mode: 'chat',
+    phase: scene.phase,
+    scene: scene.scene,
+    partner: opening.lines,
+    cues: opening.cues,
+    ...(afterMiss ? { partner_after_miss: afterMiss.lines, cues_after_miss: afterMiss.cues } : {}),
+    choices,
+  }
+}
+
+/**
+ * 毎回初見の会話を1つ組み立てる（07 §5）。
+ * free: { scenes, topics, types: { タイプID: 話し方 } } / types: types.json（軸と tips）
+ * gender: 相手の性別（ホームのタブ）/ last: 前回の相手 { type, name }（同じタイプ・名前は続けない）
+ * random: 乱数（テストでは種を決めたものを渡す）
+ * → { free: true, episode, character }（今までの話と同じ形。★2・初級・pairing any）
+ */
+function assembleFree({ free, types, names, gender, last = null, random = Math.random }) {
+  const typeIds = types.types.map((type) => type.id).filter((id) => free.types[id])
+  const typeId = pickNew(typeIds, last?.type, random)
+  const type = types.types.find((item) => item.id === typeId)
+  const part = free.types[typeId]
+  const name = pickNew(names?.[gender] ?? [], last?.name, random) ?? '相手'
+  const topic = pick(free.topics.topics, random)
+  const relation = pick(free.topics.relations, random)
+  const time = pick(free.topics.times, random)
+  const words = { ...wordsOf(topic), name }
+  const fill = (value) => fillSlots(value, words)
+
+  const character = {
+    id: FREE_ID,
+    name,
+    gender,
+    age: null,
+    type: typeId,
+    stars: FREE_STARS,
+    switches: [],
+    style: part.style,
+    icon_text: [...name][0],
+    look: randomLook(gender, random),
+  }
+  const steps = free.scenes.flow.map((sceneId, index) => buildStep({ sceneId, index, free, part, type, fill, random }))
+  const decide = steps[free.scenes.flow.indexOf('decide')]
+  const episode = {
+    id: `${FREE_ID}_${typeId}_${topic.id}`,
+    character: FREE_ID,
+    tier: 'beginner',
+    pairing: 'any',
+    title: topic.title,
+    intro: `${relation}の${name}。\n${time}、${name}からメッセージが届いた。`,
+    history: { label: '昨日', ...fill(pick(part.history, random)) },
+    exit: [],
+    steps,
+    result: {
+      // リアルで使える一言は、決める場面の最適の返事。学べることは、遊んだあとに今回ずれた軸から決める（freeLessons）
+      real_line: decide ? bestChoice(decide)?.text ?? null : null,
+      learn: [],
+    },
+    free: { topic: topic.id, relation, time },
+  }
+  return { free: true, episode, character }
+}
+
+/**
+ * 毎回初見の「このエピソードで学べること」（07）。今回ずれた軸から出す。
+ * best 以外を選んだ手ごとに、その返事の型の fit の軸のうち、相手の極と合わなかった軸を集め
+ * （おまけは grade_by の軸。grade だけのおまけは軸なし）、重ねずに axis_hints[軸][相手の極] の文を3つまで。
+ * ずれた軸がひとつもなければ1行: ぜんぶ best なら「4手ぜんぶ…」、grade だけのおまけでずれていたら「相手のタイプは読めていた…」
+ * steps: 遊んだ手（runEpisode の play.steps）/ type: 相手のタイプ（types.json の1つ）
+ */
+function freeLessons({ steps, free, type }) {
+  const axes = []
+  let missedAny = false
+  for (const { step, choice } of steps) {
+    if (choice.grade === 'best') continue
+    missedAny = true
+    const scene = free.scenes.scenes[free.scenes.flow[step.id - 1]]
+    const form = [...(scene?.cores ?? []), ...(scene?.extras ?? [])].find((item) => item.id === choice.id)
+    const missed = form?.fit
+      ? Object.keys(form.fit).filter((axis) => type[axis] !== form.fit[axis])
+      : form?.grade_by ? [form.grade_by.axis] : []
+    for (const axis of missed) if (!axes.includes(axis)) axes.push(axis)
+  }
+  const lessons = axes.map((axis) => free.scenes.axis_hints?.[axis]?.[type[axis]]).filter(Boolean).slice(0, 3)
+  if (lessons.length) return lessons
+  return missedAny
+    ? ['相手のタイプは読めていた。ただ、どの相手にも届きにくい返事があった（くわしくは1手ごとの解説で）']
+    : [`${free.scenes.flow.length}手ぜんぶ、相手に届く返事を選べた`]
+}
+
+return { FREE_ID, wordsOf, slotsOf, FREE_STARS, gradeCore, gradeExtra, assembleFree, freeLessons }
 })()
 // ---- js/data.js
 __modules["js/data.js"] = (() => {
@@ -744,6 +964,7 @@ __modules["js/data.js"] = (() => {
 // npm start で直に動かすときは、content/ を1つずつ読む（書きかえたらすぐ確かめられるように）。
 
 const { BUNDLE } = __modules["js/build-info.js"]
+const { gradeCore, gradeExtra, slotsOf, wordsOf } = __modules["js/free.js"]
 const { PAIRING_FIELDS, scenesOf, stepFor } = __modules["js/rules.js"]
 const { characterFor, storyEpisode, unknownSlots } = __modules["js/stories.js"]
 
@@ -790,13 +1011,22 @@ function gameFromBundle(bundle) {
     const episode = bundle.episodes[item.id]
     return { episode, character: bundle.characters[episode.character] }
   })
-  return { index: bundle.index, rules: bundle.rules, types: bundle.types, art: bundle.art ?? NO_ART, names: bundle.names ?? null, entries }
+  return {
+    index: bundle.index,
+    rules: bundle.rules,
+    types: bundle.types,
+    art: bundle.art ?? NO_ART,
+    names: bundle.names ?? null,
+    free: bundle.free ?? null,
+    entries,
+  }
 }
 
 /**
  * 遊べる話を全部読む（ホームに並べるため）。index.json に並ぶのは、2つの形:
  *   { id }    固定の人の話 → { episode, character }
  *   { story } お話（06 §6.6。相手は毎回ちがう）→ { story, variants: [タイプごとの話] }
+ * ほかに、毎回初見モード（07）の部品を free に読む（そろっていなければ null）
  */
 async function loadGame() {
   if (BUNDLE) return gameFromBundle(await fetchJSON(BUNDLE))
@@ -806,12 +1036,28 @@ async function loadGame() {
     loadJSON('content/types.json'),
     loadJSON('content/art.json').catch(() => NO_ART), // 画像に差し替えていなければ、なくてよい
   ])
-  const hasStories = index.episodes.some((item) => item.story)
-  const [names, entries] = await Promise.all([
-    hasStories ? loadJSON('content/names.json') : null,
+  const [names, entries, free] = await Promise.all([
+    loadJSON('content/names.json'),
     Promise.all(index.episodes.map((item) => (item.story ? loadStory(item.story) : loadEpisode(item.id)))),
+    loadFree(types.types.map((type) => type.id)),
   ])
-  return { index, rules, types, art, names, entries }
+  return { index, rules, types, art, names, free, entries }
+}
+
+/** 毎回初見モード（07）の部品。16タイプの話し方がそろっていなければ null（そのモードは出さない） */
+async function loadFree(typeIds) {
+  const read = (path) => fetchJSON(path, { cache: 'no-cache', retries: [] }) // ないファイルを待たない
+  try {
+    const [scenes, topics, parts] = await Promise.all([
+      read('content/free/scenes.json'),
+      read('content/free/topics.json'),
+      Promise.all(typeIds.map((id) => read(`content/free/types/${id}.json`))),
+    ])
+    return { scenes, topics, types: Object.fromEntries(typeIds.map((id, i) => [id, parts[i]])) }
+  } catch (error) {
+    console.warn(`[free] 毎回初見モードの部品を読めないので、出さない（${error.cause?.message ?? error.message}）`)
+    return null
+  }
 }
 
 async function loadEpisode(id) {
@@ -1032,6 +1278,152 @@ function validateStory({ story, variants }, { rules, types, names, backgrounds =
   return [...new Set(problems)]
 }
 
+/**
+ * 毎回初見モード（07）の部品の点検。どう組み立てても、4手・各手 best ちょうど1つ・A〜D の手がかりがそろう・
+ * {…} が残らない、となるように、部品の側を確かめる
+ */
+function validateFree(free, { rules, types }) {
+  const problems = []
+  const problem = (where, message) => problems.push(`free${where}: ${message}`)
+  const { scenes = {}, topics = {} } = free
+  const flow = scenes.flow ?? []
+  const grades = Object.keys(rules.grades)
+  const polesOf = (axis) => Object.keys(types.axes[axis]?.values ?? {})
+  const slots = slotsOf(topics)
+  const checkSlots = (value, where) => {
+    for (const slot of unknownSlots(value, slots)) problem(where, `${slot} は置きかえられない（使えるのは ${slots.join(' ')}）`)
+  }
+
+  // 題材。どの題材にも、同じ言葉がそろっている（ひとつでも欠けると、その題材で {…} が残る）
+  for (const key of ['relations', 'times', 'topics']) if (!topics[key]?.length) problem(' topics.json', `${key} がない`)
+  const wordKeys = slots.slice(1).map((slot) => slot.slice(1, -1))
+  for (const topic of topics.topics ?? []) {
+    for (const key of ['id', 'title', ...wordKeys]) if (!topic[key]) problem(` 題材${topic.id ?? ''}`, `${key} がない`)
+    if (Object.keys(wordsOf(topic)).some((key) => /[{}]/.test(topic[key]))) problem(` 題材${topic.id ?? ''}`, '言葉の中に {…} を書かない')
+  }
+
+  // 場面と返事の型
+  if (!flow.length) problem(' scenes.json', 'flow がない')
+  for (const axis of Object.keys(types.axes)) {
+    for (const pole of polesOf(axis)) if (!scenes.axis_hints?.[axis]?.[pole]) problem(' axis_hints', `${axis} の ${pole} がない`)
+  }
+  const tested = new Set()
+  for (const sceneId of flow) {
+    const scene = scenes.scenes?.[sceneId]
+    const at = ` ${sceneId}`
+    if (!scene) {
+      problem(at, 'scenes.json にない')
+      continue
+    }
+    for (const axis of scene.tests ?? []) {
+      tested.add(axis)
+      if (!types.axes[axis]) problem(at, `tests の軸 ${axis} が types.json にない`)
+    }
+    if (!scene.tests?.length) problem(at, 'tests（試す軸）がない')
+    const cores = scene.cores ?? []
+    const extras = scene.extras ?? []
+    if (cores.length > 4) problem(at, `核が ${cores.length} 個（4つまで）`)
+    if (cores.length + extras.length < 4) problem(at, '返事の型が4つより少ない')
+    const ids = [...cores, ...extras].map((form) => form.id)
+    if (new Set(ids).size !== ids.length) problem(at, '返事の型の id が重複している')
+    for (const form of [...cores, ...extras]) {
+      const here = `${at} ${form.id}`
+      if (!form.lines?.length) problem(here, 'lines がない')
+      for (const axis of Object.keys(form.leans ?? {})) if (!types.axes[axis]) problem(here, `leans の軸 ${axis} が types.json にない`)
+      if (form.send_as === 'sticker' && !form.sticker) problem(here, 'sticker がない')
+    }
+    for (const core of cores) {
+      const here = `${at} ${core.id}`
+      if (!Object.keys(core.fit ?? {}).length) problem(here, 'fit がない')
+      for (const [axis, pole] of Object.entries(core.fit ?? {})) {
+        if (!scene.tests?.includes(axis)) problem(here, `fit の軸 ${axis} は、この場面で試す軸ではない`)
+        if (!polesOf(axis).includes(pole)) problem(here, `fit の ${axis}「${pole}」が types.json にない`)
+      }
+      if (core.miss_grade && (!grades.includes(core.miss_grade) || core.miss_grade === 'best')) problem(here, `miss_grade「${core.miss_grade}」`)
+      if (!core.note?.best || !core.note?.what) problem(here, 'note.best と note.what がいる')
+    }
+    for (const extra of extras) {
+      const here = `${at} ${extra.id}`
+      const poles = extra.grade_by ? polesOf(extra.grade_by.axis) : [null]
+      if (extra.grade_by && !poles.length) problem(here, `grade_by の軸 ${extra.grade_by.axis} が types.json にない`)
+      for (const pole of poles) {
+        const grade = pole ? extra.grade_by[pole] : extra.grade
+        if (!grades.includes(grade)) problem(here, `${pole ? `grade_by の ${pole}` : 'grade'}「${grade}」が rules.json にない`)
+        if (grade === 'best') problem(here, 'おまけは best にしない')
+        if (!(typeof extra.note === 'string' || (pole && extra.note?.[pole]))) problem(here, `note${pole ? ` の ${pole}` : ''} がない`)
+      }
+    }
+    // どのタイプにも、核のちょうど1つが best になる（だから、どう組み立てても best はちょうど1つ）
+    for (const type of types.types) {
+      const bests = cores.filter((core) => gradeCore(core, type).grade === 'best').length
+      if (bests !== 1) problem(at, `${type.id} に合う核が ${bests} 個（ちょうど1つにする）`)
+      for (const extra of extras) if (gradeExtra(extra, type).grade === 'best') problem(at, `${extra.id} が ${type.id} で best になる`)
+    }
+    checkSlots(scene, at)
+  }
+  const untested = Object.keys(types.axes).filter((axis) => !tested.has(axis))
+  if (flow.length && untested.length) problem('', `どの場面でも試さない軸がある（${untested.join('・')}）`)
+
+  // タイプごとの話し方
+  for (const type of types.types) {
+    const part = free.types?.[type.id]
+    const at = ` ${type.id}`
+    if (!part) {
+      problem(at, `types/${type.id}.json がない`)
+      continue
+    }
+    if (part.type !== type.id) problem(at, `type が「${part.type}」`)
+    if (!part.history?.length) problem(at, 'history がない')
+    for (const [i, history] of (part.history ?? []).entries()) if (!history.messages?.length) problem(`${at} history${i + 1}`, 'messages がない')
+    for (const [index, sceneId] of flow.entries()) {
+      const talk = part.scenes?.[sceneId]
+      const here = `${at} ${sceneId}`
+      if (!talk) {
+        problem(here, '話し方がない')
+        continue
+      }
+      const tests = scenes.scenes?.[sceneId]?.tests ?? []
+      const checkVariants = (variants, name) => {
+        if (!variants?.length) return problem(here, `${name} がない`)
+        for (const [i, variant] of variants.entries()) {
+          const where = `${here} ${name}${i + 1}`
+          if (!variant.lines?.length) problem(where, 'lines がない')
+          for (const cue of variant.cues ?? []) {
+            if (!types.axes[cue.axis]) problem(where, `cues の軸 ${cue.axis} が types.json にない`)
+            if (!Number.isInteger(cue.line) || cue.line < 0 || cue.line >= (variant.lines?.length ?? 0)) problem(where, `cues の line ${cue.line} が、セリフの行の範囲にない`)
+            if (!cue.text) problem(where, 'cues の text がない')
+          }
+          const axes = new Set((variant.cues ?? []).map((cue) => cue.axis))
+          const missing = tests.filter((axis) => !axes.has(axis))
+          if (missing.length) problem(where, `この場面で試す軸の手がかりがない（${missing.join('・')}）`)
+        }
+      }
+      checkVariants(talk.partner, 'partner')
+      if (index > 0) checkVariants(talk.after_miss, 'after_miss')
+      for (const outcome of ['best', 'good', 'miss']) {
+        const variants = talk.reactions?.[outcome]
+        if (!variants?.length) problem(here, `reactions.${outcome} がない`)
+        for (const lines of variants ?? []) if (!Array.isArray(lines) || !lines.length) problem(here, `reactions.${outcome} に空のものがある`)
+      }
+    }
+    checkSlots(part, at)
+    // 書き方の決まり（07 §6）: 「…」は察してほしい人の目印なので、言葉どおりの人のセリフ（ミスのあとも、昨日のやりとりも）には使わない。
+    // 反応の「…」は、だれでも自然な落胆なのでよい。締めの場面では、答えのいる質問をしない
+    const said = (talk) => [...(talk?.partner ?? []), ...(talk?.after_miss ?? [])].flatMap((variant) => variant.lines ?? [])
+    if (type.C === 'literal') {
+      const history = (part.history ?? []).flatMap((item) => (item.messages ?? []).filter((message) => message.from === 'partner').map((message) => message.text))
+      for (const line of [...flow.flatMap((id) => said(part.scenes?.[id])), ...history].filter((text) => text?.includes('…'))) {
+        problem(at, `言葉どおりの人のセリフに「…」がある（${line}）`)
+      }
+    }
+    for (const line of said(part.scenes?.close).filter((text) => /[？?]/.test(text))) problem(`${at} close`, `締めの場面で質問している（${line}）`)
+    // タイプの名前は、遊んでいる間に見える文に出さない
+    const visible = JSON.stringify([part.history, part.scenes])
+    for (const other of types.types) if (visible.includes(other.name)) problem(at, `タイプの名前（${other.name}）が出ている`)
+  }
+  return [...new Set(problems)]
+}
+
 const PAIRING_NAMES = { same: '同性', opposite: '異性' }
 
 /** その手の手がかりの軸（cues と cues_after_miss）。並べて返す */
@@ -1039,7 +1431,7 @@ function cueAxes(step) {
   return [...new Set([...(step.cues ?? []), ...(step.cues_after_miss ?? [])].map((cue) => cue.axis))].sort()
 }
 
-return { fetchJSON, loadJSON, gameFromBundle, loadGame, loadEpisode, loadStory, validateEpisode, validateStory }
+return { fetchJSON, loadJSON, gameFromBundle, loadGame, loadFree, loadEpisode, loadStory, validateEpisode, validateStory, validateFree }
 })()
 // ---- js/report.js
 __modules["js/report.js"] = (() => {
@@ -1052,9 +1444,9 @@ const VARIANTS = { same: '同性', opposite: '異性', base: '元の手' }
 
 /**
  * guess: null（スキップ）/ { kind: 'type', answers: { A: 'near', … } } / { kind: 'gap', option: 'a' }
- * story・met: お話（06 §6.6）のときだけ。相手は毎回ちがうので、そのタイプと名前を残す
+ * story・free・tally: お話（06 §6.6）と毎回初見（07）のときだけ。相手は毎回ちがうので、そのタイプと名前を残す
  */
-function buildReport({ rules, types, episode, character, story = null, met = null, play, saved, guess, playMs, playerGender }) {
+function buildReport({ rules, types, episode, character, story = null, free = false, tally = null, play, saved, guess, playMs, playerGender }) {
   const { record, isFirst } = saved
   const first = record.first ?? { score: play.score }
   const tier = TIERS[episode.tier]
@@ -1066,8 +1458,8 @@ function buildReport({ rules, types, episode, character, story = null, met = nul
   const typeName = types.types.find((type) => type.id === character.type)?.name ?? character.type
   return [
     '【男女心 試作テスト】',
-    `話: ${character.name}「${episode.title}」${tier ? `（${tier}）` : ''}`,
-    story ? `相手: ${typeName}（★${character.stars}）${met ? `・このお話で会ったタイプ ${met.count}/${met.total}` : ''}` : null,
+    `話: ${character.name}「${episode.title}」${tier ? `（${tier}${free ? '・毎回初見' : ''}）` : ''}`,
+    story || free ? `相手: ${typeName}（★${character.stars}）${(tally ?? []).map((text) => `・${text}`).join('')}` : null,
     `あなた: ${GENDERS[playerGender] ?? GENDERS.none}${pairing ? `（${PAIRINGS[pairing]}）` : ''}`,
     `初見スコア: ${first.score}（${rankFor(first.score, rules).label}） / 今回: ${now}`,
     `選んだ返事: ${picks}${ended}`,
@@ -1211,7 +1603,7 @@ function memoryStorage() {
 
 function createStore(storage) {
   const keyOf = (episodeId) => `${PREFIX}episode:${episodeId}`
-  const storyKeyOf = (storyId) => `${PREFIX}story:${storyId}`
+  const seriesKeyOf = (series) => `${PREFIX}${series}`
   const playerKey = `${PREFIX}player`
 
   function readJSON(key) {
@@ -1234,9 +1626,13 @@ function createStore(storage) {
     return readJSON(keyOf(episodeId)) ?? { plays: 0, best: null, first: null }
   }
 
-  /** お話の記録（06 §6.6）。read の形に、会ったタイプ（met）と前回の相手（last: { type, name }）を足したもの */
-  function readStory(storyId) {
-    return { plays: 0, best: null, first: null, met: [], last: null, ...readJSON(storyKeyOf(storyId)) }
+  /**
+   * 相手が毎回ちがう遊び方の記録。series は、お話（06 §6.6）なら 'story:<お話ID>'、毎回初見（07）なら 'free'。
+   * read の形に、会ったタイプ（met）・前回の相手（last: { type, name }）・
+   * タイプ推理をした回数（guessed）と、4軸ぜんぶ当てた回数（perfect）を足したもの
+   */
+  function readSeries(series) {
+    return { plays: 0, best: null, first: null, met: [], last: null, guessed: 0, perfect: 0, ...readJSON(seriesKeyOf(series)) }
   }
 
   /** 最後まで遊んだ1回を数える。初見（1回目）は上書きしない。extra は1回目の記録に足すもの */
@@ -1260,7 +1656,7 @@ function createStore(storage) {
 
   return {
     read,
-    readStory,
+    readSeries,
 
     /** 最後まで遊んだ1回を記録する。初見（1回目）は上書きしない */
     recordPlay(episodeId, play) {
@@ -1270,23 +1666,35 @@ function createStore(storage) {
       return { isFirst, record }
     },
 
-    /** お話を最後まで遊んだ1回を記録する。1回目の記録には相手のタイプと名前も残し、次は同じ相手を続けない */
-    recordStoryPlay(storyId, play, { type, name }) {
-      const record = readStory(storyId)
-      const isFirst = countPlay(record, play, { type, name })
+    /**
+     * お話・毎回初見を最後まで遊んだ1回を記録する。1回目の記録には相手のタイプと名前（extra も）を残し、
+     * 次は同じ相手を続けないように、前回の相手（last）を覚える
+     */
+    recordSeriesPlay(series, play, { type, name, ...extra }) {
+      const record = readSeries(series)
+      const isFirst = countPlay(record, play, { type, name, ...extra })
       record.last = { type, name }
-      writeJSON(storyKeyOf(storyId), record)
+      writeJSON(seriesKeyOf(series), record)
       return { isFirst, record }
     },
 
     /** 種明かしで会ったタイプを数える。会ったタイプの一覧を返す */
-    meetType(storyId, type) {
-      const record = readStory(storyId)
+    meetType(series, type) {
+      const record = readSeries(series)
       if (!record.met.includes(type)) {
         record.met = [...record.met, type]
-        writeJSON(storyKeyOf(storyId), record)
+        writeJSON(seriesKeyOf(series), record)
       }
       return record.met
+    },
+
+    /** タイプ推理をした1回を数える（perfect: 4軸ぜんぶ当てた）。{ guessed, perfect } を返す */
+    countGuess(series, perfect) {
+      const record = readSeries(series)
+      record.guessed += 1
+      if (perfect) record.perfect += 1
+      writeJSON(seriesKeyOf(series), record)
+      return { guessed: record.guessed, perfect: record.perfect }
     },
 
     /** プレイヤーの設定: { gender: 'male' | 'female' | 'none' } */
@@ -1940,8 +2348,8 @@ __modules["js/screens/home.js"] = (() => {
 const { GENDERS, PAIRINGS, TABS, homeCards } = __modules["js/catalog.js"]
 const { characterAvatar, h, tierBadge } = __modules["js/ui.js"]
 
-function homeScreen({ entries, tab, playerGender, recordOf, storyRecordOf, onTab, onOpen, onChangeGender }) {
-  const cards = homeCards({ entries, tab, playerGender, recordOf, storyRecordOf })
+function homeScreen({ entries, tab, playerGender, recordOf, seriesRecordOf, free, onTab, onOpen, onChangeGender }) {
+  const cards = homeCards({ entries, tab, playerGender, recordOf, seriesRecordOf, free })
   const pairBadge = (c) => (c.pairing ? h('span', { class: `badge pair pair-${c.pairing}`, text: PAIRINGS[c.pairing] }) : null)
 
   const cardNode = (c) => h('button', {
@@ -1980,6 +2388,23 @@ function homeScreen({ entries, tab, playerGender, recordOf, storyRecordOf, onTab
     ),
   )
 
+  // 毎回初見（07）: 開くたびに、相手も会話もその場で組み立てる
+  const freeNode = (c) => h('button', { class: 'ep-card free', type: 'button', onClick: () => onOpen(c.entry) },
+    characterAvatar({ id: 'free', name: '？', icon_text: '？' }, 'md'),
+    h('span', { class: 'ep-body' },
+      h('span', { class: 'ep-top' },
+        h('span', { class: 'ep-who', text: `${c.total}タイプのだれか` }),
+        tierBadge('beginner', c.tier),
+        pairBadge(c),
+      ),
+      h('span', { class: 'ep-title', text: '毎回初見' }),
+      h('span', { class: 'ep-relation', text: 'だれが来るかは、開くまでわからない' }),
+      c.best != null
+        ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}・4軸ぜんぶ当てた ${c.perfect}回` })
+        : null,
+    ),
+  )
+
   return h('section', { class: 'screen home' },
     h('header', { class: 'home-head' },
       h('p', { class: 'home-logo' }, '男女心', h('small', { text: '（仮）試作版' })),
@@ -1999,7 +2424,7 @@ function homeScreen({ entries, tab, playerGender, recordOf, storyRecordOf, onTab
     ),
     h('div', { class: 'home-list' },
       cards.length
-        ? cards.map((c) => (c.story ? storyNode(c) : cardNode(c)))
+        ? cards.map((c) => (c.free ? freeNode(c) : c.story ? storyNode(c) : cardNode(c)))
         : h('p', { class: 'fine home-empty', text: 'まだ遊べる話がありません' }),
     ),
     h('p', { class: 'fine home-foot', text: '記録はこの端末のブラウザの中にだけ残ります。' }),
@@ -2020,12 +2445,12 @@ const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮'
 const stepNumber = (id) => CIRCLED[id - 1] ?? `${id}.`
 const STAR_LABELS = { 1: '余裕あり', 2: 'ふつう', 3: '余裕なし' } // 心の余裕（設計書 §3.3）
 
-/** met: お話で会ったタイプの数 { count, total }（06 §6.6）。固定の人の話なら null */
-function resultScreen({ episode, character, rules, types, play, saved, guess, met = null, onRetry, onHome, onCopy }) {
+/** tally: お話・毎回初見の腕前の行（「このお話で会ったタイプ 2/4」など）。固定の人の話なら null */
+function resultScreen({ episode, character, rules, types, play, saved, guess, tally = null, onRetry, onHome, onCopy }) {
   const type = types.types.find((t) => t.id === character.type)
   const axes = Object.entries(types.axes)
   const result = episode.result ?? {}
-  const ctx = { episode, character, rules, types, type, axes, met }
+  const ctx = { episode, character, rules, types, type, axes, tally }
 
   return h('section', { class: 'screen result' },
     scorePart(ctx, play, saved),
@@ -2052,10 +2477,12 @@ function resultScreen({ episode, character, rules, types, play, saved, guess, me
 // 1. 点数とランク（初見かリトライか。リトライならベストも）
 function scorePart({ episode, character, rules }, play, saved) {
   const { isFirst, record } = saved
+  // 毎回初見（07）は毎回ちがう会話なので「リトライ」ではなく「n回目」
+  const again = episode.free ? `${record.plays}回目` : `リトライ（${record.plays}回目）`
   const meta = isFirst
     ? [h('span', { class: 'chip accent', text: '初見' })]
     : [
-        h('span', { class: 'chip accent', text: `リトライ（${record.plays}回目）` }),
+        h('span', { class: 'chip accent', text: again }),
         h('span', { class: 'chip', text: `ベスト ${record.best}点` }),
         h('span', { class: 'chip', text: `初見 ${record.first.score}点` }),
       ]
@@ -2068,8 +2495,8 @@ function scorePart({ episode, character, rules }, play, saved) {
   )
 }
 
-// 2. タイプの種明かし（心の余裕の★と、ギャップも。お話なら、会ったタイプの数も）
-function typePart({ episode, character, type, axes, met }) {
+// 2. タイプの種明かし（心の余裕の★と、ギャップも。お話・毎回初見なら、会ったタイプの数なども）
+function typePart({ episode, character, type, axes, tally }) {
   const section = card(`${character.name}のタイプは……`,
     h('p', { class: 'type-name', text: type.name }),
     h('p', { class: 'type-catch', text: type.catch }),
@@ -2080,7 +2507,7 @@ function typePart({ episode, character, type, axes, met }) {
     h('p', { class: 'type-stars' },
       '心の余裕 ', stars(character.stars), `（${STAR_LABELS[character.stars] ?? ''}）`,
     ),
-    met ? h('p', { class: 'type-met', text: `このお話で会ったタイプ ${met.count}/${met.total}` }) : null,
+    (tally ?? []).map((text) => h('p', { class: 'type-met', text })),
     gapPart({ episode, character, type, axes }),
   )
   section.classList.add('reveal')
@@ -2307,8 +2734,9 @@ __modules["js/main.js"] = (() => {
 // S0 タイトル → S1 遊び方 → S1.5 あなたは？（初回だけ）→ S2 ホーム → S3 紹介 → S4 会話（場面ごと）→ S5 推理 → S6 結果
 
 const { BACKGROUND_IDS, lookProblems, setArtImages } = __modules["js/art/index.js"]
-const { TIERS, defaultTab, pairingOf } = __modules["js/catalog.js"]
-const { loadGame, validateEpisode, validateStory } = __modules["js/data.js"]
+const { TIERS, defaultTab, pairingOf, seriesOf } = __modules["js/catalog.js"]
+const { loadGame, validateEpisode, validateFree, validateStory } = __modules["js/data.js"]
+const { assembleFree, freeLessons } = __modules["js/free.js"]
 const { buildReport } = __modules["js/report.js"]
 const { runEpisode } = __modules["js/runner.js"]
 const { browserStorage, createStore } = __modules["js/store.js"]
@@ -2342,9 +2770,9 @@ document.addEventListener('keydown', (event) => {
   if (skipWaits() > 0) event.preventDefault()
 })
 
-let game // { index, rules, types, art, names, entries: [{ episode, character } または お話 { story, variants }] }
+let game // { index, rules, types, art, names, free, entries: [{ episode, character } または お話 { story, variants }] }
 let homeTab = null // ホームで開いているタブ（相手の性別）
-// いまのプレイ: { source（ホームで選んだもの）, entry（遊ぶ { episode, character, story? }）, startedAt, play, saved, guess, playMs, met }
+// いまのプレイ: { source（ホームで選んだもの）, entry（遊ぶ { episode, character, story?, free? }）, startedAt, play, saved, guess, playMs, tally }
 let session
 
 function show(screen, { guard = true } = {}) {
@@ -2384,6 +2812,7 @@ function checkContent() {
   for (const character of new Set(game.entries.filter((entry) => entry.character).map((entry) => entry.character))) {
     for (const problem of lookProblems(character.look)) console.warn(`[art] ${character.id}: ${problem}`)
   }
+  if (game.free) for (const problem of validateFree(game.free, options)) console.warn(`[content] ${problem}`)
 }
 
 function afterHowTo() {
@@ -2409,7 +2838,8 @@ function showHome({ guard = true } = {}) {
     tab: homeTab,
     playerGender: playerGender(),
     recordOf: (id) => store.read(id),
-    storyRecordOf: (id) => store.readStory(id),
+    seriesRecordOf: (series) => store.readSeries(series),
+    free: game.free ? { total: Object.keys(game.free.types).length } : null,
     onTab: (tab) => {
       homeTab = tab
       showHome({ guard: false })
@@ -2419,11 +2849,18 @@ function showHome({ guard = true } = {}) {
   }), { guard })
 }
 
-/** ホームで選んだ話を開く。お話なら、ここで相手（タイプ・名前・見た目）が決まる（06 §6.6） */
+/**
+ * ホームで選んだ話を開く。お話（06 §6.6）なら、ここで相手（タイプ・名前・見た目）が決まる。
+ * 毎回初見（07）なら、相手も会話もここで組み立てる
+ */
 function openEntry(source) {
-  const entry = source.story
-    ? castStory({ ...source, names: game.names, last: store.readStory(source.story.id).last })
-    : source
+  const series = seriesOf(source)
+  const last = series ? store.readSeries(series).last : null
+  const entry = source.free
+    ? assembleFree({ free: game.free, types: game.types, names: game.names, gender: source.gender, last })
+    : source.story
+      ? castStory({ ...source, names: game.names, last })
+      : source
   showIntro(entry, source)
 }
 
@@ -2447,11 +2884,11 @@ async function startConversation(entry, source) {
     director: conversation,
     pairing: pairingOf(playerGender(), entry.character.gender), // 同性・異性で1手だけ入れかわる
   })
-  // 会話を最後まで（0点で途中終了も含む）終えた時点で記録する。お話は、お話ごとに記録する
-  const { story, character } = entry
-  session.saved = story
-    ? store.recordStoryPlay(story.id, session.play, { type: character.type, name: character.name })
-    : store.recordPlay(entry.episode.id, session.play)
+  // 会話を最後まで（0点で途中終了も含む）終えた時点で記録する。お話・毎回初見は、相手のタイプと名前も残す
+  const series = seriesOf(entry)
+  const { character, episode } = entry
+  const cast = { type: character.type, name: character.name, ...(episode.free ? { topic: episode.free.topic } : {}) }
+  session.saved = series ? store.recordSeriesPlay(series, session.play, cast) : store.recordPlay(episode.id, session.play)
   await conversation.showEnd(entry.episode.guess === 'gap' ? 'ギャップ推理へ' : 'タイプ推理へ')
   show(guessScreen({
     ...entry,
@@ -2466,21 +2903,46 @@ async function startConversation(entry, source) {
 function showResult() {
   // プレイ時間は S3 の[会話をはじめる]から、結果が最初に出るまで
   session.playMs ??= Date.now() - session.startedAt
-  // お話で会ったタイプは、種明かし（この画面）で数える
-  const { story, character } = session.entry
-  session.met ??= story ? { count: store.meetType(story.id, character.type).length, total: story.variants.length } : null
+  session.tally ??= tallyOf(session.entry, session.guess)
   show(resultScreen({
-    ...session.entry,
+    ...withLessons(session.entry, session.play),
     rules: game.rules,
     types: game.types,
     play: session.play,
     saved: session.saved,
     guess: session.guess,
-    met: session.met,
+    tally: session.tally,
     onRetry: () => openEntry(session.source), // お話なら、また新しい相手になる
     onHome: () => showHome(),
     onCopy: copyReport,
   }))
+}
+
+/** 毎回初見の「このエピソードで学べること」は、今回ずれた軸から決める（07）。お話・固定の人の話は、そのまま */
+function withLessons(entry, play) {
+  if (!entry.free) return entry
+  const type = game.types.types.find((item) => item.id === entry.character.type)
+  const learn = freeLessons({ steps: play.steps, free: game.free, type })
+  return { ...entry, episode: { ...entry.episode, result: { ...entry.episode.result, learn } } }
+}
+
+/**
+ * お話・毎回初見の腕前（結果とコピーに出す行）。会ったタイプは、種明かし（結果の画面）で数える。
+ * 毎回初見は、タイプ推理で4軸ぜんぶ当てた回数も数える（推理をスキップした回は数えない）
+ */
+function tallyOf(entry, guess) {
+  const series = seriesOf(entry)
+  if (!series) return null
+  const met = store.meetType(series, entry.character.type).length
+  if (!entry.free) return [`このお話で会ったタイプ ${met}/${entry.story.variants.length}`]
+  const type = game.types.types.find((item) => item.id === entry.character.type)
+  const counts = guess?.kind === 'type'
+    ? store.countGuess(series, Object.keys(game.types.axes).every((axis) => guess.answers[axis] === type[axis]))
+    : store.readSeries(series)
+  return [
+    `毎回初見で会ったタイプ ${met}/${Object.keys(game.free.types).length}`,
+    `4軸ぜんぶ当てた ${counts.perfect}回／${counts.guessed}回`,
+  ]
 }
 
 async function copyReport() {
@@ -2491,7 +2953,7 @@ async function copyReport() {
     play: session.play,
     saved: session.saved,
     guess: session.guess,
-    met: session.met,
+    tally: session.tally,
     playMs: session.playMs,
     playerGender: playerGender(),
   })
