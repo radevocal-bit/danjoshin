@@ -866,7 +866,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=9a387526a4"
+const BUNDLE = "content/bundle.json?v=6f2571fb94"
 
 return { BUNDLE }
 })()
@@ -1241,6 +1241,7 @@ function buildStep({ sceneId, index, scenes, part, type, fill, random }) {
  * 毎回初見の会話を1つ組み立てる（07 §5・§8.5）。
  * free: { scenes, topics, relations, types: { タイプID: 話し方 } } / types: types.json（軸と tips）
  * spot: 場所 { category, segment }（関係のページか、おまかせで決まる。catalog.resolveFree）。relations.json のその場所の層を重ねる
+ *   （層に names・icon があれば、相手の名前とアイコンの字はそこから。07 §9.3）
  * gender: 相手の性別（関係のページの切りかえか、開くときにランダム）/ pairing: 話の pairing（関係の pairing。恋愛・夫婦は opposite）
  * last: 前回の相手 { type, name }（同じタイプ・名前は続けない）/ random: 乱数（テストでは種を決めたものを渡す）
  * → { free: true, category, segment, episode, character }（今までの話と同じ形。★2・初級）
@@ -1254,7 +1255,8 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', last 
   const typeId = pickNew(typeIds, last?.type, random)
   const type = types.types.find((item) => item.id === typeId)
   const part = free.types[typeId]
-  const name = pickNew(names?.[gender] ?? [], last?.name, random) ?? '相手'
+  // 名前は、関係の層に names があればそこから（相手が親の「お母さん」など。07 §9.3）。なければ names.json から
+  const name = pickNew((layer.names ?? names)?.[gender] ?? [], last?.name, random) ?? '相手'
   const topic = pick(layer.topics.map((id) => free.topics.topics.find((item) => item.id === id)), random)
   const who = pick(Array.isArray(layer.who) ? layer.who : layer.who[gender], random) // 夫婦の妻・夫は、相手の性別で
   const status = layer.status?.length ? pick(layer.status, random) : null
@@ -1271,7 +1273,7 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', last 
     stars: FREE_STARS,
     switches: [],
     style: part.style,
-    icon_text: [...name][0],
+    icon_text: layer.icon?.[gender] ?? [...name][0], // 関係の層に icon があればその字（相手が親の「母」「父」）
     look: randomLook(gender, random),
   }
   const steps = scenes.flow.map((sceneId, index) => buildStep({ sceneId, index, scenes, part, type, fill, random }))
@@ -1783,6 +1785,24 @@ function validateFree(free, { rules, types, categories = null }) {
     if (layer.status && !layer.status.length) problem(at, 'status が空（なくてよいなら、項目ごと書かない）')
     for (const field of ['times', 'topics']) if (!layer[field]?.length) problem(at, `${field} がない`)
     for (const id of layer.topics ?? []) if (!topics.topics?.some((topic) => topic.id === id)) problem(at, `題材「${id}」が topics.json にない`)
+    // 相手の名前とアイコンの字（07 §9.3。なくてよい）。書くなら相手の性別ごとに、名前は1つ以上（空の名前なし）、アイコンは1字
+    const byGender = (value) => value && typeof value === 'object' && !Array.isArray(value)
+    if (layer.names != null && !byGender(layer.names)) problem(at, 'names は { "female": [...], "male": [...] } の形')
+    else if (layer.names != null) {
+      for (const gender of ['female', 'male']) {
+        const list = layer.names[gender]
+        if (!Array.isArray(list) || !list.length) problem(at, `names の ${gender} がない（1つ以上）`)
+        else if (list.some((name) => typeof name !== 'string' || !name.trim())) problem(at, `names の ${gender} に空の名前がある`)
+      }
+    }
+    if (layer.icon != null && !byGender(layer.icon)) problem(at, 'icon は { "female": "…", "male": "…" } の形')
+    else if (layer.icon != null) {
+      for (const gender of ['female', 'male']) {
+        const icon = layer.icon[gender]
+        if (typeof icon !== 'string' || !icon.trim()) problem(at, `icon の ${gender} がない`)
+        else if ([...icon].length !== 1) problem(at, `icon の ${gender} は1字にする（「${icon}」）`)
+      }
+    }
     for (const [id, patch] of Object.entries(layer.forms ?? {})) {
       const kind = kinds.get(id)
       if (!kind) {
