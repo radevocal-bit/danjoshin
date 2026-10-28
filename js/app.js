@@ -663,6 +663,9 @@ const shownTo = (entry, playerGender) => !(tagsOf(entry).pairing === 'opposite' 
 /** プレイヤーが性別を答えているか（「答えない」でない） */
 const answered = (playerGender) => playerGender === 'male' || playerGender === 'female'
 
+/** 毎回初見の場所の名前: '<関係>' か '<関係>:<切りかえ>'。relations.json のキー（07 §8.3）と、記録の名前に使う */
+const spotKey = ({ category, segment } = {}) => [category, segment].filter(Boolean).join(':')
+
 /**
  * 相手が毎回ちがう遊び方の記録の名前（store.readSeries に渡す）。固定の人の話は null。
  * お話は 'story:<お話ID>'。毎回初見（07）は関係ごとに 'free:<関係>'（切りかえごとに部品があれば 'free:<関係>:<切りかえ>'。08 §4.4）
@@ -670,7 +673,7 @@ const answered = (playerGender) => playerGender === 'male' || playerGender === '
 function seriesOf(entry) {
   if (entry.story) return `story:${entry.story.id}`
   if (!entry.free) return null
-  return ['free', entry.category, entry.segment].filter(Boolean).join(':')
+  return ['free', spotKey(entry)].filter(Boolean).join(':')
 }
 
 /**
@@ -701,15 +704,21 @@ function freeGenderOf(category, playerGender, partnerGender) {
 }
 
 /**
- * 毎回初見のカードを開くときに、関係・切りかえ・相手の性別を決める。
+ * 毎回初見のカードを開くときに、関係・切りかえ・相手の性別と、話の pairing（関係の pairing。ほかは any。07 §8.5）を決める。
  * おまかせ（ホーム。08 §4.1）なら、部品がある所から1つを選ぶ。性別が決まっていなければ、男女をランダムに
  */
 function resolveFree(source, { categories, playerGender, random = Math.random }) {
-  const spots = freeSpots(categories)
-  const spot = source.omakase ? spots[Math.floor(random() * spots.length)] : source
+  const spot = source.omakase ? omakaseSpot(freeSpots(categories), random) : source
   const category = categories.categories.find((item) => item.id === spot.category)
   const gender = (source.omakase ? freeGenderOf(category, playerGender, 'any') : source.gender) ?? (random() < 0.5 ? 'female' : 'male')
-  return { category: spot.category, segment: spot.segment, gender }
+  return { category: spot.category, segment: spot.segment, gender, pairing: category?.pairing ?? 'any' }
+}
+
+/** おまかせの場所。まず部品がある関係を同じ割合で選び、切りかえがあればその中から同じ割合で（恋愛が切りかえの数だけ多く出ないように） */
+function omakaseSpot(spots, random) {
+  const pick = (list) => list[Math.floor(random() * list.length)]
+  const category = pick([...new Set(spots.map((spot) => spot.category))])
+  return pick(spots.filter((spot) => spot.category === category))
 }
 
 const NO_SERIES = { plays: 0, best: null, met: [], guessed: 0, perfect: 0 }
@@ -749,7 +758,8 @@ function omakaseCard({ categories, free, seriesRecordOf = () => NO_SERIES }) {
  * @param free           毎回初見の部品があれば { total: タイプの数 }
  * @returns { category, segments, segment, genderFilter（相手の性別の切りかえを出すか）, partnerGender, controls, cards, empty }
  *   controls: 切りかえ・相手の性別を出すか（この関係に、このプレイヤーが遊べるものが何もなければ出さない）
- *   empty: 話のカードがないとき 'category'（この関係の話がない）/ 'filter'（切りかえ・性別で絞ると空）。あれば null
+ *   empty: カードが1つもないとき 'category'（この関係の話がない）/ 'filter'（切りかえ・性別で絞ると空）。
+ *     毎回初見のカードがあれば、話のカードがなくても null（遊べるものがあるので「準備中」は出さない）
  */
 function categoryPage({ category, entries, segment = null, partnerGender = 'any', playerGender, recordOf, seriesRecordOf = () => NO_SERIES, free = null }) {
   // 恋愛・夫婦は、男性・女性のプレイヤーには異性の相手だけなので、相手の性別は選ばない
@@ -787,7 +797,7 @@ function categoryPage({ category, entries, segment = null, partnerGender = 'any'
     partnerGender: gender,
     controls: available.length > 0 || spots.length > 0,
     cards: [...freeCards, ...cards],
-    empty: cards.length ? null : available.length ? 'filter' : 'category',
+    empty: cards.length || freeCards.length ? null : available.length ? 'filter' : 'category',
   }
 }
 
@@ -851,12 +861,12 @@ function freeCard({ id, entry, pairing, total, record }) {
   }
 }
 
-return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, seriesOf, freeSpots, spotLabel, freeGenderOf, resolveFree, homeTiles, omakaseCard, categoryPage }
+return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, freeSpots, spotLabel, freeGenderOf, resolveFree, homeTiles, omakaseCard, categoryPage }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=1ed70de0d2"
+const BUNDLE = "content/bundle.json?v=9a387526a4"
 
 return { BUNDLE }
 })()
@@ -1094,14 +1104,21 @@ __modules["js/free.js"] = (() => {
 // 毎回初見モード（07）。会話を部品（content/free/）から、その場で組み立てる。画面には触らない。
 // 組み立てたものは今までの話と同じ形（4手）なので、会話・推理・結果の画面はそのまま使える。
 //   scenes.json  場面と返事の型（核＝試す軸を分け合う型、おまけ＝best にならない型）
-//   topics.json  題材（{event} などの言葉）・関係・時間帯
-//   types/<タイプ>.json  タイプごとの話し方（相手のセリフ・手がかり・反応・昨日のやりとり）
+//   topics.json  題材（{event} などの言葉）
+//   relations.json  関係の層（07 §8）。場所（友達・恋愛の付き合う前 など）ごとの紹介・時間帯・題材と、返事の型の上書き
+//   types/<タイプ>.json  タイプごとの話し方（相手のセリフ・手がかり・反応・昨日のやりとり。関係ごとの昨日のやりとりは by_relation）
 
+const { spotKey } = __modules["js/catalog.js"]
 const { bestChoice, shuffle } = __modules["js/rules.js"]
 const { NAME_SLOT, fillSlots, pickNew, randomLook } = __modules["js/stories.js"]
 
 const FREE_ID = 'free'
 const TOPIC_INFO = ['id', 'title', 'kind'] // 題材のうち、文に入れる言葉ではない項目
+/** 関係の層の forms で上書きできる項目（07 §8.3）。核の fit（どのタイプに合うか）は変えない。反応（reactions）と学べることの文（lesson）は、おまけだけ */
+const FORM_FIELDS = {
+  core: ['lines', 'miss_grade', 'note'],
+  extra: ['lines', 'grade', 'grade_by', 'note', 'reactions', 'lesson'],
+}
 
 /** 題材の言葉（{event}・{treat} など）。題材の id・title・kind 以外の項目 */
 function wordsOf(topic) {
@@ -1140,11 +1157,42 @@ function gradeExtra(extra, type) {
   return { grade, note }
 }
 
+/**
+ * 関係の層（07 §8）を重ねた場面と返事の型。layer: relations.json の場所の1つ（なければ scenes.json のまま）。
+ * forms を重ね（書いた項目だけ）→ exclude のおまけを外し → extras を足す。元のデータは変えない
+ */
+function layeredScenes(scenes, layer = {}) {
+  const forms = layer.forms ?? {}
+  const over = (form) => {
+    const patch = forms[form.id]
+    if (!patch) return form
+    const merged = { ...form, ...patch }
+    // おまけの点は、上書きした決め方（grade か grade_by）だけにする
+    if ('grade' in patch && !('grade_by' in patch)) delete merged.grade_by
+    if ('grade_by' in patch && !('grade' in patch)) delete merged.grade
+    return merged
+  }
+  const excluded = new Set(layer.exclude ?? [])
+  return {
+    ...scenes,
+    scenes: Object.fromEntries(Object.entries(scenes.scenes ?? {}).map(([id, scene]) => [id, {
+      ...scene,
+      cores: (scene.cores ?? []).map(over),
+      extras: [...(scene.extras ?? []).filter((extra) => !excluded.has(extra.id)).map(over), ...(layer.extras?.[id] ?? [])],
+    }])),
+  }
+}
+
+/** その場所（{ category, segment }）の、関係の層を重ねた場面と返事の型 */
+function scenesFor(free, spot) {
+  return layeredScenes(free.scenes, free.relations?.spots?.[spotKey(spot)])
+}
+
 /** 反応の種類。best・good 以外（weak・bad・mine）は miss */
 const outcomeOf = (grade) => (grade === 'best' || grade === 'good' ? grade : 'miss')
 
-function buildStep({ sceneId, index, free, part, type, fill, random }) {
-  const scene = free.scenes.scenes[sceneId]
+function buildStep({ sceneId, index, scenes, part, type, fill, random }) {
+  const scene = scenes.scenes[sceneId]
   const talk = part.scenes[sceneId]
   // 相手のセリフ。cues の line（何行目か）は、今までの話と同じくセリフの文にする
   const say = (variant) => {
@@ -1154,8 +1202,11 @@ function buildStep({ sceneId, index, free, part, type, fill, random }) {
   const opening = say(pick(talk.partner, random))
   const afterMiss = index > 0 && talk.after_miss?.length ? say(pick(talk.after_miss, random)) : null
 
-  const reaction = (grade) => {
-    const variants = talk.reactions?.[outcomeOf(grade)] ?? []
+  // 相手の反応。返事の型に reactions があれば（関係の層。07 §8.3）そこから、grade_by の軸の相手の極で（grade だけなら配列）。
+  // なければ、タイプの反応から点数の種類で
+  const reaction = (form, grade) => {
+    const own = form.grade_by ? form.reactions?.[type[form.grade_by.axis]] : form.reactions
+    const variants = Array.isArray(own) && own.length ? own : talk.reactions?.[outcomeOf(grade)] ?? []
     return (variants.length ? pick(variants, random) : []).map((text) => ({ text: fill(text) }))
   }
   const choiceOf = (form, { grade, note }) => ({
@@ -1163,14 +1214,14 @@ function buildStep({ sceneId, index, free, part, type, fill, random }) {
     text: fill(pick(form.lines, random)),
     grade,
     leans: form.leans ?? {},
-    reaction: reaction(grade),
+    reaction: reaction(form, grade),
     note: fill(note),
     ...(form.send_as ? { send_as: form.send_as, sticker: form.sticker } : {}),
   })
   // 選択肢は4つ: 核の全部 ＋ おまけからランダムに残りの数（報告は核4つ、ほかは核2つ＋おまけ2つ）
   const extras = shuffle(scene.extras ?? [], random).slice(0, Math.max(0, 4 - scene.cores.length))
   const choices = [
-    ...scene.cores.map((core) => choiceOf(core, gradeCore(core, type, free.scenes.axis_hints))),
+    ...scene.cores.map((core) => choiceOf(core, gradeCore(core, type, scenes.axis_hints))),
     ...extras.map((extra) => choiceOf(extra, gradeExtra(extra, type))),
   ]
 
@@ -1187,21 +1238,27 @@ function buildStep({ sceneId, index, free, part, type, fill, random }) {
 }
 
 /**
- * 毎回初見の会話を1つ組み立てる（07 §5）。
- * free: { scenes, topics, types: { タイプID: 話し方 } } / types: types.json（軸と tips）
- * gender: 相手の性別（関係のページの切りかえか、開くときにランダム。catalog.resolveFree）/ last: 前回の相手 { type, name }（同じタイプ・名前は続けない）
- * random: 乱数（テストでは種を決めたものを渡す）
- * → { free: true, episode, character }（今までの話と同じ形。★2・初級・pairing any）
+ * 毎回初見の会話を1つ組み立てる（07 §5・§8.5）。
+ * free: { scenes, topics, relations, types: { タイプID: 話し方 } } / types: types.json（軸と tips）
+ * spot: 場所 { category, segment }（関係のページか、おまかせで決まる。catalog.resolveFree）。relations.json のその場所の層を重ねる
+ * gender: 相手の性別（関係のページの切りかえか、開くときにランダム）/ pairing: 話の pairing（関係の pairing。恋愛・夫婦は opposite）
+ * last: 前回の相手 { type, name }（同じタイプ・名前は続けない）/ random: 乱数（テストでは種を決めたものを渡す）
+ * → { free: true, category, segment, episode, character }（今までの話と同じ形。★2・初級）
  */
-function assembleFree({ free, types, names, gender, last = null, random = Math.random }) {
+function assembleFree({ free, types, names, spot, gender, pairing = 'any', last = null, random = Math.random }) {
+  const key = spotKey(spot)
+  const layer = free.relations?.spots?.[key]
+  if (!layer) throw new Error(`毎回初見の場所「${key}」が relations.json にない`)
+  const scenes = layeredScenes(free.scenes, layer)
   const typeIds = types.types.map((type) => type.id).filter((id) => free.types[id])
   const typeId = pickNew(typeIds, last?.type, random)
   const type = types.types.find((item) => item.id === typeId)
   const part = free.types[typeId]
   const name = pickNew(names?.[gender] ?? [], last?.name, random) ?? '相手'
-  const topic = pick(free.topics.topics, random)
-  const relation = pick(free.topics.relations, random)
-  const time = pick(free.topics.times, random)
+  const topic = pick(layer.topics.map((id) => free.topics.topics.find((item) => item.id === id)), random)
+  const who = pick(Array.isArray(layer.who) ? layer.who : layer.who[gender], random) // 夫婦の妻・夫は、相手の性別で
+  const status = layer.status?.length ? pick(layer.status, random) : null
+  const time = pick(layer.times, random)
   const words = { ...wordsOf(topic), name }
   const fill = (value) => fillSlots(value, words)
 
@@ -1217,16 +1274,19 @@ function assembleFree({ free, types, names, gender, last = null, random = Math.r
     icon_text: [...name][0],
     look: randomLook(gender, random),
   }
-  const steps = free.scenes.flow.map((sceneId, index) => buildStep({ sceneId, index, free, part, type, fill, random }))
-  const decide = steps[free.scenes.flow.indexOf('decide')]
+  const steps = scenes.flow.map((sceneId, index) => buildStep({ sceneId, index, scenes, part, type, fill, random }))
+  const decide = steps[scenes.flow.indexOf('decide')]
+  // 昨日のやりとりは、その場所のもの（by_relation。07 §8.4）があればそこから
+  const histories = part.by_relation?.[key]?.history?.length ? part.by_relation[key].history : part.history
   const episode = {
     id: `${FREE_ID}_${typeId}_${topic.id}`,
     character: FREE_ID,
     tier: 'beginner',
-    pairing: 'any',
+    pairing,
     title: topic.title,
-    intro: `${relation}の${name}。\n${time}、${name}からメッセージが届いた。`,
-    history: { label: '昨日', ...fill(pick(part.history, random)) },
+    // 紹介: 「{who}の{name}。{status}」（status がない場所は1文だけ）と「{time}、{name}からメッセージが届いた。」
+    intro: fill(`${who}の{name}。${status ?? ''}\n${time}、{name}からメッセージが届いた。`),
+    history: { label: '昨日', ...fill(pick(histories, random)) },
     exit: [],
     steps,
     result: {
@@ -1234,39 +1294,42 @@ function assembleFree({ free, types, names, gender, last = null, random = Math.r
       real_line: decide ? bestChoice(decide)?.text ?? null : null,
       learn: [],
     },
-    free: { topic: topic.id, relation, time },
+    free: { spot: key, topic: topic.id, who, status, time },
   }
-  return { free: true, episode, character }
+  return { free: true, category: spot.category, segment: spot.segment ?? null, episode, character }
 }
 
 /**
- * 毎回初見の「このエピソードで学べること」（07）。今回ずれた軸から出す。
- * best 以外を選んだ手ごとに、その返事の型の fit の軸のうち、相手の極と合わなかった軸を集め
- * （おまけは grade_by の軸。grade だけのおまけは軸なし）、重ねずに axis_hints[軸][相手の極] の文を3つまで。
- * ずれた軸がひとつもなければ1行: ぜんぶ best なら「4手ぜんぶ…」、grade だけのおまけでずれていたら「相手のタイプは読めていた…」
+ * 毎回初見の「このエピソードで学べること」（07 §5 の9）。best 以外を選んだ手から、出た順に3つまで。
+ * 核は、fit の軸のうち相手の極と合わなかった軸の axis_hints[軸][相手の極]。
+ * おまけは grade_by の軸で、その型に lesson[相手の極] があればその文、なければ axis_hints（grade だけのおまけは出さない）。
+ * 重ならないように数えるのは文で（同じ軸でも、lesson と axis_hints は別の1行）。
+ * 出す文がひとつもなければ1行: ぜんぶ best なら「4手ぜんぶ…」、grade だけのおまけでずれていたら「相手のタイプは読めていた…」
+ * 返事の型は、遊んだ場所（spot: { category, segment }）の関係の層を重ねたもの（夫婦だけのおまけ・付き合う前の点の上書き など）
  * steps: 遊んだ手（runEpisode の play.steps）/ type: 相手のタイプ（types.json の1つ）
  */
-function freeLessons({ steps, free, type }) {
-  const axes = []
+function freeLessons({ steps, free, spot, type }) {
+  const scenes = scenesFor(free, spot)
+  const hint = (axis) => scenes.axis_hints?.[axis]?.[type[axis]]
+  const lessons = []
   let missedAny = false
   for (const { step, choice } of steps) {
     if (choice.grade === 'best') continue
     missedAny = true
-    const scene = free.scenes.scenes[free.scenes.flow[step.id - 1]]
+    const scene = scenes.scenes[scenes.flow[step.id - 1]]
     const form = [...(scene?.cores ?? []), ...(scene?.extras ?? [])].find((item) => item.id === choice.id)
-    const missed = form?.fit
-      ? Object.keys(form.fit).filter((axis) => type[axis] !== form.fit[axis])
-      : form?.grade_by ? [form.grade_by.axis] : []
-    for (const axis of missed) if (!axes.includes(axis)) axes.push(axis)
+    const found = form?.fit
+      ? Object.keys(form.fit).filter((axis) => type[axis] !== form.fit[axis]).map(hint)
+      : form?.grade_by ? [form.lesson?.[type[form.grade_by.axis]] ?? hint(form.grade_by.axis)] : []
+    for (const line of found) if (line && !lessons.includes(line)) lessons.push(line)
   }
-  const lessons = axes.map((axis) => free.scenes.axis_hints?.[axis]?.[type[axis]]).filter(Boolean).slice(0, 3)
-  if (lessons.length) return lessons
+  if (lessons.length) return lessons.slice(0, 3)
   return missedAny
     ? ['相手のタイプは読めていた。ただ、どの相手にも届きにくい返事があった（くわしくは1手ごとの解説で）']
-    : [`${free.scenes.flow.length}手ぜんぶ、相手に届く返事を選べた`]
+    : [`${scenes.flow.length}手ぜんぶ、相手に届く返事を選べた`]
 }
 
-return { FREE_ID, wordsOf, slotsOf, FREE_STARS, gradeCore, gradeExtra, assembleFree, freeLessons }
+return { FREE_ID, FORM_FIELDS, wordsOf, slotsOf, FREE_STARS, gradeCore, gradeExtra, layeredScenes, scenesFor, assembleFree, freeLessons }
 })()
 // ---- js/data.js
 __modules["js/data.js"] = (() => {
@@ -1275,7 +1338,8 @@ __modules["js/data.js"] = (() => {
 // npm start で直に動かすときは、content/ を1つずつ読む（書きかえたらすぐ確かめられるように）。
 
 const { BUNDLE } = __modules["js/build-info.js"]
-const { gradeCore, gradeExtra, slotsOf, wordsOf } = __modules["js/free.js"]
+const { freeSpots, spotKey } = __modules["js/catalog.js"]
+const { FORM_FIELDS, gradeCore, gradeExtra, layeredScenes, slotsOf, wordsOf } = __modules["js/free.js"]
 const { PAIRING_FIELDS, scenesOf, stepFor } = __modules["js/rules.js"]
 const { characterFor, storyEpisode, unknownSlots } = __modules["js/stories.js"]
 
@@ -1357,16 +1421,17 @@ async function loadGame() {
   return { index, categories, rules, types, art, names, free, entries }
 }
 
-/** 毎回初見モード（07）の部品。16タイプの話し方がそろっていなければ null（そのモードは出さない） */
+/** 毎回初見モード（07）の部品。関係の層（relations.json。07 §8）や16タイプの話し方がそろっていなければ null（そのモードは出さない） */
 async function loadFree(typeIds) {
   const read = (path) => fetchJSON(path, { cache: 'no-cache', retries: [] }) // ないファイルを待たない
   try {
-    const [scenes, topics, parts] = await Promise.all([
+    const [scenes, topics, relations, parts] = await Promise.all([
       read('content/free/scenes.json'),
       read('content/free/topics.json'),
+      read('content/free/relations.json'),
       Promise.all(typeIds.map((id) => read(`content/free/types/${id}.json`))),
     ])
-    return { scenes, topics, types: Object.fromEntries(typeIds.map((id, i) => [id, parts[i]])) }
+    return { scenes, topics, relations, types: Object.fromEntries(typeIds.map((id, i) => [id, parts[i]])) }
   } catch (error) {
     console.warn(`[free] 毎回初見モードの部品を読めないので、出さない（${error.cause?.message ?? error.message}）`)
     return null
@@ -1593,22 +1658,25 @@ function validateStory({ story, variants }, { rules, types, names, backgrounds =
 
 /**
  * 毎回初見モード（07）の部品の点検。どう組み立てても、4手・各手 best ちょうど1つ・A〜D の手がかりがそろう・
- * {…} が残らない、となるように、部品の側を確かめる
+ * {…} が残らない、となるように、部品の側を確かめる。関係の層（relations.json。07 §8.6）は、場所ごとに重ねたあとでも同じことを確かめる
+ * categories: categories.json（渡せば、free: true の場所と relations.json のキーがそろっているかも見る）
  */
-function validateFree(free, { rules, types }) {
+function validateFree(free, { rules, types, categories = null }) {
   const problems = []
   const problem = (where, message) => problems.push(`free${where}: ${message}`)
-  const { scenes = {}, topics = {} } = free
+  const { scenes = {}, topics = {}, relations = {} } = free
   const flow = scenes.flow ?? []
+  const spots = relations.spots ?? {}
   const grades = Object.keys(rules.grades)
   const polesOf = (axis) => Object.keys(types.axes[axis]?.values ?? {})
   const slots = slotsOf(topics)
+  const slotProblems = (value) => unknownSlots(value, slots).map((slot) => `${slot} は置きかえられない（使えるのは ${slots.join(' ')}）`)
   const checkSlots = (value, where) => {
-    for (const slot of unknownSlots(value, slots)) problem(where, `${slot} は置きかえられない（使えるのは ${slots.join(' ')}）`)
+    for (const message of slotProblems(value)) problem(where, message)
   }
 
   // 題材。どの題材にも、同じ言葉がそろっている（ひとつでも欠けると、その題材で {…} が残る）
-  for (const key of ['relations', 'times', 'topics']) if (!topics[key]?.length) problem(' topics.json', `${key} がない`)
+  if (!topics.topics?.length) problem(' topics.json', 'topics がない')
   const wordKeys = slots.slice(1).map((slot) => slot.slice(1, -1))
   for (const topic of topics.topics ?? []) {
     for (const key of ['id', 'title', ...wordKeys]) if (!topic[key]) problem(` 題材${topic.id ?? ''}`, `${key} がない`)
@@ -1620,62 +1688,121 @@ function validateFree(free, { rules, types }) {
   for (const axis of Object.keys(types.axes)) {
     for (const pole of polesOf(axis)) if (!scenes.axis_hints?.[axis]?.[pole]) problem(' axis_hints', `${axis} の ${pole} がない`)
   }
-  const tested = new Set()
-  for (const sceneId of flow) {
-    const scene = scenes.scenes?.[sceneId]
+  // 場面ごとの返事の型の決まり。scenes.json のままと、場所ごとに関係の層を重ねたあとの両方で見る → [' <場面>…: 問題']
+  const formProblems = (layered) => flow.flatMap((sceneId) => {
+    const found = []
+    const add = (where, message) => found.push(`${where}: ${message}`)
+    const scene = layered.scenes?.[sceneId]
     const at = ` ${sceneId}`
-    if (!scene) {
-      problem(at, 'scenes.json にない')
-      continue
-    }
-    for (const axis of scene.tests ?? []) {
-      tested.add(axis)
-      if (!types.axes[axis]) problem(at, `tests の軸 ${axis} が types.json にない`)
-    }
-    if (!scene.tests?.length) problem(at, 'tests（試す軸）がない')
+    if (!scene) return [`${at}: scenes.json にない`]
+    for (const axis of scene.tests ?? []) if (!types.axes[axis]) add(at, `tests の軸 ${axis} が types.json にない`)
+    if (!scene.tests?.length) add(at, 'tests（試す軸）がない')
     const cores = scene.cores ?? []
     const extras = scene.extras ?? []
-    if (cores.length > 4) problem(at, `核が ${cores.length} 個（4つまで）`)
-    if (cores.length + extras.length < 4) problem(at, '返事の型が4つより少ない')
+    if (cores.length > 4) add(at, `核が ${cores.length} 個（4つまで）`)
+    if (cores.length + extras.length < 4) add(at, '返事の型が4つより少ない')
     const ids = [...cores, ...extras].map((form) => form.id)
-    if (new Set(ids).size !== ids.length) problem(at, '返事の型の id が重複している')
+    if (new Set(ids).size !== ids.length) add(at, '返事の型の id が重複している')
     for (const form of [...cores, ...extras]) {
       const here = `${at} ${form.id}`
-      if (!form.lines?.length) problem(here, 'lines がない')
-      for (const axis of Object.keys(form.leans ?? {})) if (!types.axes[axis]) problem(here, `leans の軸 ${axis} が types.json にない`)
-      if (form.send_as === 'sticker' && !form.sticker) problem(here, 'sticker がない')
+      if (!form.lines?.length) add(here, 'lines がない')
+      for (const axis of Object.keys(form.leans ?? {})) if (!types.axes[axis]) add(here, `leans の軸 ${axis} が types.json にない`)
+      if (form.send_as === 'sticker' && !form.sticker) add(here, 'sticker がない')
     }
     for (const core of cores) {
       const here = `${at} ${core.id}`
-      if (!Object.keys(core.fit ?? {}).length) problem(here, 'fit がない')
+      if (!Object.keys(core.fit ?? {}).length) add(here, 'fit がない')
       for (const [axis, pole] of Object.entries(core.fit ?? {})) {
-        if (!scene.tests?.includes(axis)) problem(here, `fit の軸 ${axis} は、この場面で試す軸ではない`)
-        if (!polesOf(axis).includes(pole)) problem(here, `fit の ${axis}「${pole}」が types.json にない`)
+        if (!scene.tests?.includes(axis)) add(here, `fit の軸 ${axis} は、この場面で試す軸ではない`)
+        if (!polesOf(axis).includes(pole)) add(here, `fit の ${axis}「${pole}」が types.json にない`)
       }
-      if (core.miss_grade && (!grades.includes(core.miss_grade) || core.miss_grade === 'best')) problem(here, `miss_grade「${core.miss_grade}」`)
-      if (!core.note?.best || !core.note?.what) problem(here, 'note.best と note.what がいる')
+      if (core.miss_grade && (!grades.includes(core.miss_grade) || core.miss_grade === 'best')) add(here, `miss_grade「${core.miss_grade}」`)
+      if (!core.note?.best || !core.note?.what) add(here, 'note.best と note.what がいる')
+      if (core.reactions) add(here, '核には reactions を書かない（反応はタイプの reactions から）')
+      if (core.lesson) add(here, '核には lesson を書かない（学べることは、ずれた軸の axis_hints から）')
     }
     for (const extra of extras) {
       const here = `${at} ${extra.id}`
       const poles = extra.grade_by ? polesOf(extra.grade_by.axis) : [null]
-      if (extra.grade_by && !poles.length) problem(here, `grade_by の軸 ${extra.grade_by.axis} が types.json にない`)
+      if (extra.grade_by && !poles.length) add(here, `grade_by の軸 ${extra.grade_by.axis} が types.json にない`)
       for (const pole of poles) {
         const grade = pole ? extra.grade_by[pole] : extra.grade
-        if (!grades.includes(grade)) problem(here, `${pole ? `grade_by の ${pole}` : 'grade'}「${grade}」が rules.json にない`)
-        if (grade === 'best') problem(here, 'おまけは best にしない')
-        if (!(typeof extra.note === 'string' || (pole && extra.note?.[pole]))) problem(here, `note${pole ? ` の ${pole}` : ''} がない`)
+        if (!grades.includes(grade)) add(here, `${pole ? `grade_by の ${pole}` : 'grade'}「${grade}」が rules.json にない`)
+        if (grade === 'best') add(here, 'おまけは best にしない')
+        if (!(typeof extra.note === 'string' || (pole && extra.note?.[pole]))) add(here, `note${pole ? ` の ${pole}` : ''} がない`)
+        // 返事の型の反応（関係の層。07 §8.3）は、grade_by の極ぜんぶに。grade だけなら [[…]] の形で1つ以上
+        if (!extra.reactions) continue
+        const name = `reactions${pole ? ` の ${pole}` : ''}`
+        const variants = pole ? extra.reactions[pole] : extra.reactions
+        if (!Array.isArray(variants) || !variants.length) add(here, `${name} がない${pole ? '' : '（grade だけなら [[…]] の形）'}`)
+        else if (variants.some((lines) => !Array.isArray(lines) || !lines.length)) add(here, `${name} に空のものがある`)
+      }
+      // 学べることの文（07 §4.1）は grade_by のおまけだけ。キーはその軸の極。学べることは置きかえないので {…} を入れない
+      if (extra.lesson == null) continue
+      if (!extra.grade_by) add(here, 'lesson は grade_by のおまけだけ（grade だけのおまけには書かない）')
+      else if (typeof extra.lesson !== 'object' || Array.isArray(extra.lesson)) add(here, 'lesson は { "<極>": "…" } の形')
+      else {
+        for (const [pole, text] of Object.entries(extra.lesson)) {
+          if (!poles.includes(pole)) add(here, `lesson の ${pole} は、grade_by の軸 ${extra.grade_by.axis} の極ではない`)
+          if (typeof text !== 'string' || !text.trim()) add(here, `lesson の ${pole} が空`)
+          else if (/[{}]/.test(text)) add(here, `lesson の ${pole} に {…} を書かない（学べることは置きかえない）`)
+        }
       }
     }
     // どのタイプにも、核のちょうど1つが best になる（だから、どう組み立てても best はちょうど1つ）
     for (const type of types.types) {
       const bests = cores.filter((core) => gradeCore(core, type).grade === 'best').length
-      if (bests !== 1) problem(at, `${type.id} に合う核が ${bests} 個（ちょうど1つにする）`)
-      for (const extra of extras) if (gradeExtra(extra, type).grade === 'best') problem(at, `${extra.id} が ${type.id} で best になる`)
+      if (bests !== 1) add(at, `${type.id} に合う核が ${bests} 個（ちょうど1つにする）`)
+      for (const extra of extras) if (gradeExtra(extra, type).grade === 'best') add(at, `${extra.id} が ${type.id} で best になる`)
     }
-    checkSlots(scene, at)
-  }
+    for (const message of slotProblems(scene)) add(at, message)
+    return found
+  })
+  const base = formProblems(scenes)
+  problems.push(...base.map((text) => `free${text}`))
+  const tested = new Set(flow.flatMap((sceneId) => scenes.scenes?.[sceneId]?.tests ?? []))
   const untested = Object.keys(types.axes).filter((axis) => !tested.has(axis))
   if (flow.length && untested.length) problem('', `どの場面でも試さない軸がある（${untested.join('・')}）`)
+
+  // 関係の層（07 §8.3）。キーは categories.json で free: true の場所と、ちょうど同じにそろえる
+  const keys = Object.keys(spots)
+  if (!keys.length) problem(' relations.json', 'spots がない')
+  if (categories) {
+    const expected = freeSpots(categories).map(spotKey)
+    for (const key of expected.filter((key) => !keys.includes(key))) problem(' relations.json', `${key} がない（categories.json で free: true）`)
+    for (const key of keys.filter((key) => !expected.includes(key))) problem(' relations.json', `${key} は、categories.json で free: true の場所ではない`)
+  }
+  const kinds = new Map(flow.flatMap((sceneId) => [
+    ...(scenes.scenes?.[sceneId]?.cores ?? []).map((core) => [core.id, 'core']),
+    ...(scenes.scenes?.[sceneId]?.extras ?? []).map((extra) => [extra.id, 'extra']),
+  ]))
+  for (const [key, layer] of Object.entries(spots)) {
+    const at = ` relations.json ${key}`
+    const { who } = layer
+    if (Array.isArray(who) ? !who.length : !(who?.female?.length && who?.male?.length)) problem(at, 'who がない（相手の性別で分けるなら female と male の両方に）')
+    if (layer.status && !layer.status.length) problem(at, 'status が空（なくてよいなら、項目ごと書かない）')
+    for (const field of ['times', 'topics']) if (!layer[field]?.length) problem(at, `${field} がない`)
+    for (const id of layer.topics ?? []) if (!topics.topics?.some((topic) => topic.id === id)) problem(at, `題材「${id}」が topics.json にない`)
+    for (const [id, patch] of Object.entries(layer.forms ?? {})) {
+      const kind = kinds.get(id)
+      if (!kind) {
+        problem(at, `forms の ${id} が scenes.json にない`)
+        continue
+      }
+      const wrong = Object.keys(patch ?? {}).filter((field) => !FORM_FIELDS[kind].includes(field))
+      if (wrong.length) problem(at, `forms の ${id}（${kind === 'core' ? '核' : 'おまけ'}）で上書きできるのは ${FORM_FIELDS[kind].join('・')}（${wrong.join('・')} は書けない）`)
+    }
+    for (const id of layer.exclude ?? []) {
+      if (kinds.get(id) === 'core') problem(at, `exclude の ${id} は核なので外せない`)
+      else if (!kinds.has(id)) problem(at, `exclude の ${id} が scenes.json にない`)
+    }
+    for (const sceneId of Object.keys(layer.extras ?? {})) if (!flow.includes(sceneId)) problem(at, `extras の場面 ${sceneId} が flow にない`)
+    checkSlots(layer, at)
+    const visible = JSON.stringify(layer)
+    for (const type of types.types) if (visible.includes(type.name)) problem(at, `タイプの名前（${type.name}）が出ている`)
+    // 重ねたあとも、場面ごとの決まりを守る（scenes.json のままと同じ問題は、くり返さない）
+    for (const text of formProblems(layeredScenes(scenes, layer))) if (!base.includes(text)) problems.push(`free ${key}${text}`)
+  }
 
   // タイプごとの話し方
   for (const type of types.types) {
@@ -1688,6 +1815,15 @@ function validateFree(free, { rules, types }) {
     if (part.type !== type.id) problem(at, `type が「${part.type}」`)
     if (!part.history?.length) problem(at, 'history がない')
     for (const [i, history] of (part.history ?? []).entries()) if (!history.messages?.length) problem(`${at} history${i + 1}`, 'messages がない')
+    // 関係ごとの昨日のやりとり（07 §8.4）。キーは relations.json の場所。書けるのは history だけ
+    for (const [key, extra] of Object.entries(part.by_relation ?? {})) {
+      const here = `${at} by_relation.${key}`
+      if (!spots[key]) problem(here, `${key} が relations.json にない`)
+      const wrong = Object.keys(extra ?? {}).filter((field) => field !== 'history')
+      if (wrong.length) problem(here, `書けるのは history だけ（${wrong.join('・')} は書けない）`)
+      if (!extra?.history?.length) problem(here, 'history がない')
+      for (const [i, history] of (extra?.history ?? []).entries()) if (!history.messages?.length) problem(`${here} history${i + 1}`, 'messages がない')
+    }
     for (const [index, sceneId] of flow.entries()) {
       const talk = part.scenes?.[sceneId]
       const here = `${at} ${sceneId}`
@@ -1720,18 +1856,19 @@ function validateFree(free, { rules, types }) {
       }
     }
     checkSlots(part, at)
-    // 書き方の決まり（07 §6）: 「…」は察してほしい人の目印なので、言葉どおりの人のセリフ（ミスのあとも、昨日のやりとりも）には使わない。
+    // 書き方の決まり（07 §6）: 「…」は察してほしい人の目印なので、言葉どおりの人のセリフ（ミスのあとも、関係ごとのものも含めた昨日のやりとりも）には使わない。
     // 反応の「…」は、だれでも自然な落胆なのでよい。締めの場面では、答えのいる質問をしない
     const said = (talk) => [...(talk?.partner ?? []), ...(talk?.after_miss ?? [])].flatMap((variant) => variant.lines ?? [])
     if (type.C === 'literal') {
-      const history = (part.history ?? []).flatMap((item) => (item.messages ?? []).filter((message) => message.from === 'partner').map((message) => message.text))
+      const histories = [part.history, ...Object.values(part.by_relation ?? {}).map((extra) => extra?.history)].flatMap((list) => list ?? [])
+      const history = histories.flatMap((item) => (item.messages ?? []).filter((message) => message.from === 'partner').map((message) => message.text))
       for (const line of [...flow.flatMap((id) => said(part.scenes?.[id])), ...history].filter((text) => text?.includes('…'))) {
         problem(at, `言葉どおりの人のセリフに「…」がある（${line}）`)
       }
     }
     for (const line of said(part.scenes?.close).filter((text) => /[？?]/.test(text))) problem(`${at} close`, `締めの場面で質問している（${line}）`)
     // タイプの名前は、遊んでいる間に見える文に出さない
-    const visible = JSON.stringify([part.history, part.scenes])
+    const visible = JSON.stringify([part.history, part.by_relation, part.scenes])
     for (const other of types.types) if (visible.includes(other.name)) problem(at, `タイプの名前（${other.name}）が出ている`)
   }
   return [...new Set(problems)]
@@ -3099,7 +3236,7 @@ async function boot() {
 /** データと絵の点検。おかしな所はコンソールに出す */
 function checkContent() {
   const episodeIds = game.entries.filter((entry) => entry.episode).map((entry) => entry.episode.id)
-  const options = { rules: game.rules, types: game.types, names: game.names, backgrounds: BACKGROUND_IDS, episodeIds }
+  const options = { rules: game.rules, types: game.types, names: game.names, categories: game.categories, backgrounds: BACKGROUND_IDS, episodeIds }
   for (const entry of game.entries) {
     const problems = entry.story ? validateStory(entry, options) : validateEpisode(entry, options)
     for (const problem of problems) console.warn(`[content] ${problem}`)
@@ -3181,18 +3318,14 @@ const placeLabel = () => {
 
 /**
  * 選んだ話を開く。お話（06 §6.6）なら、ここで相手（タイプ・名前・見た目）が決まる。
- * 毎回初見（07）なら、関係（おまかせのとき）と相手の性別を決めて、相手も会話もここで組み立てる
+ * 毎回初見（07）なら、関係（おまかせのとき）と相手の性別を決めて、その関係の層を重ねて相手も会話もここで組み立てる（07 §8）
  */
 function openEntry(source) {
   const target = source.free ? { ...source, ...resolveFree(source, { categories: game.categories, playerGender: playerGender() }) } : source
   const series = seriesOf(target)
   const last = series ? store.readSeries(series).last : null
   const entry = target.free
-    ? {
-        ...assembleFree({ free: game.free, types: game.types, names: game.names, gender: target.gender, last }),
-        category: target.category,
-        segment: target.segment,
-      }
+    ? assembleFree({ free: game.free, types: game.types, names: game.names, spot: target, gender: target.gender, pairing: target.pairing, last })
     : target.story
       ? castStory({ ...target, names: game.names, last })
       : target
@@ -3258,7 +3391,7 @@ function showResult() {
 function withLessons(entry, play) {
   if (!entry.free) return entry
   const type = game.types.types.find((item) => item.id === entry.character.type)
-  const learn = freeLessons({ steps: play.steps, free: game.free, type })
+  const learn = freeLessons({ steps: play.steps, free: game.free, spot: entry, type })
   return { ...entry, episode: { ...entry.episode, result: { ...entry.episode.result, learn } } }
 }
 
