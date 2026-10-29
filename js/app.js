@@ -866,7 +866,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=86d3609a76"
+const BUNDLE = "content/bundle.json?v=e98a8a775a"
 
 return { BUNDLE }
 })()
@@ -1191,9 +1191,9 @@ function scenesFor(free, spot) {
 /** 反応の種類。best・good 以外（weak・bad・mine）は miss */
 const outcomeOf = (grade) => (grade === 'best' || grade === 'good' ? grade : 'miss')
 
-function buildStep({ sceneId, index, scenes, part, type, fill, random }) {
+/** talk: その場面の相手の話し方（partner・after_miss・reactions。場所ごとのものを重ねたあと） */
+function buildStep({ sceneId, index, scenes, talk, type, fill, random }) {
   const scene = scenes.scenes[sceneId]
-  const talk = part.scenes[sceneId]
   // 相手のセリフ。cues の line（何行目か）は、今までの話と同じくセリフの文にする
   const say = (variant) => {
     const lines = variant.lines.map(fill)
@@ -1276,7 +1276,9 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', last 
     icon_text: layer.icon?.[gender] ?? [...name][0], // 関係の層に icon があればその字（相手が親の「母」「父」）
     look: randomLook(gender, random),
   }
-  const steps = scenes.flow.map((sceneId, index) => buildStep({ sceneId, index, scenes, part, type, fill, random }))
+  // 相手の話し方は、その場所のもの（by_relation の scenes。07 §10.3）があれば、書いた項目（partner・after_miss・reactions）だけそこから
+  const placed = part.by_relation?.[key]?.scenes ?? {}
+  const steps = scenes.flow.map((sceneId, index) => buildStep({ sceneId, index, scenes, talk: { ...part.scenes[sceneId], ...placed[sceneId] }, type, fill, random }))
   const decide = steps[scenes.flow.indexOf('decide')]
   // 昨日のやりとりは、その場所のもの（by_relation。07 §8.4）があればそこから
   const histories = part.by_relation?.[key]?.history?.length ? part.by_relation[key].history : part.history
@@ -1350,6 +1352,8 @@ const TIER_IDS = ['beginner', 'intermediate', 'advanced']
 const NO_ART = { characters: {}, backgrounds: {} }
 const RETRY_MS = [600, 1800] // つながらないときは、間をあけて2回までやり直す
 const TIMEOUT_MS = 15000 // 1回で待つ長さ
+const BY_RELATION_FIELDS = ['history', 'scenes'] // 毎回初見のタイプの by_relation.<場所> に書けるもの（07 §8.4・§10.3）
+const TALK_FIELDS = ['partner', 'after_miss', 'reactions'] // by_relation の scenes.<場面> に書けるもの
 
 /** fetch して JSON にする。失敗したら retries の間をあけてやり直す */
 async function fetchJSON(url, { cache: mode = 'default', retries = RETRY_MS, timeout = TIMEOUT_MS, fetchImpl = globalThis.fetch } = {}) {
@@ -1824,6 +1828,35 @@ function validateFree(free, { rules, types, categories = null }) {
     for (const text of formProblems(layeredScenes(scenes, layer))) if (!base.includes(text)) problems.push(`free ${key}${text}`)
   }
 
+  // 場面の話し方（相手のセリフ・ミスのあと・反応）の点検。optional（by_relation の scenes）なら、書いた項目だけを見る
+  const checkTalk = (talk, sceneId, here, optional = false) => {
+    const tests = scenes.scenes?.[sceneId]?.tests ?? []
+    const checkVariants = (variants, name) => {
+      if (optional && variants == null) return
+      if (!variants?.length) return problem(here, `${name} がない`)
+      for (const [i, variant] of variants.entries()) {
+        const where = `${here} ${name}${i + 1}`
+        if (!variant.lines?.length) problem(where, 'lines がない')
+        for (const cue of variant.cues ?? []) {
+          if (!types.axes[cue.axis]) problem(where, `cues の軸 ${cue.axis} が types.json にない`)
+          if (!Number.isInteger(cue.line) || cue.line < 0 || cue.line >= (variant.lines?.length ?? 0)) problem(where, `cues の line ${cue.line} が、セリフの行の範囲にない`)
+          if (!cue.text) problem(where, 'cues の text がない')
+        }
+        const axes = new Set((variant.cues ?? []).map((cue) => cue.axis))
+        const missing = tests.filter((axis) => !axes.has(axis))
+        if (missing.length) problem(where, `この場面で試す軸の手がかりがない（${missing.join('・')}）`)
+      }
+    }
+    checkVariants(talk.partner, 'partner')
+    if (flow.indexOf(sceneId) > 0) checkVariants(talk.after_miss, 'after_miss')
+    if (optional && talk.reactions == null) return
+    for (const outcome of ['best', 'good', 'miss']) {
+      const variants = talk.reactions?.[outcome]
+      if (!variants?.length) problem(here, `reactions.${outcome} がない`)
+      for (const lines of variants ?? []) if (!Array.isArray(lines) || !lines.length) problem(here, `reactions.${outcome} に空のものがある`)
+    }
+  }
+
   // タイプごとの話し方
   for (const type of types.types) {
     const part = free.types?.[type.id]
@@ -1835,58 +1868,46 @@ function validateFree(free, { rules, types, categories = null }) {
     if (part.type !== type.id) problem(at, `type が「${part.type}」`)
     if (!part.history?.length) problem(at, 'history がない')
     for (const [i, history] of (part.history ?? []).entries()) if (!history.messages?.length) problem(`${at} history${i + 1}`, 'messages がない')
-    // 関係ごとの昨日のやりとり（07 §8.4）。キーは relations.json の場所。書けるのは history だけ
+    // 関係ごとの昨日のやりとり（07 §8.4）と、場面ごとの話し方（scenes。07 §10.3）。キーは relations.json の場所
     for (const [key, extra] of Object.entries(part.by_relation ?? {})) {
       const here = `${at} by_relation.${key}`
       if (!spots[key]) problem(here, `${key} が relations.json にない`)
-      const wrong = Object.keys(extra ?? {}).filter((field) => field !== 'history')
-      if (wrong.length) problem(here, `書けるのは history だけ（${wrong.join('・')} は書けない）`)
+      const wrong = Object.keys(extra ?? {}).filter((field) => !BY_RELATION_FIELDS.includes(field))
+      if (wrong.length) problem(here, `書けるのは ${BY_RELATION_FIELDS.join('・')} だけ（${wrong.join('・')} は書けない）`)
       if (!extra?.history?.length) problem(here, 'history がない')
       for (const [i, history] of (extra?.history ?? []).entries()) if (!history.messages?.length) problem(`${here} history${i + 1}`, 'messages がない')
-    }
-    for (const [index, sceneId] of flow.entries()) {
-      const talk = part.scenes?.[sceneId]
-      const here = `${at} ${sceneId}`
-      if (!talk) {
-        problem(here, '話し方がない')
-        continue
-      }
-      const tests = scenes.scenes?.[sceneId]?.tests ?? []
-      const checkVariants = (variants, name) => {
-        if (!variants?.length) return problem(here, `${name} がない`)
-        for (const [i, variant] of variants.entries()) {
-          const where = `${here} ${name}${i + 1}`
-          if (!variant.lines?.length) problem(where, 'lines がない')
-          for (const cue of variant.cues ?? []) {
-            if (!types.axes[cue.axis]) problem(where, `cues の軸 ${cue.axis} が types.json にない`)
-            if (!Number.isInteger(cue.line) || cue.line < 0 || cue.line >= (variant.lines?.length ?? 0)) problem(where, `cues の line ${cue.line} が、セリフの行の範囲にない`)
-            if (!cue.text) problem(where, 'cues の text がない')
-          }
-          const axes = new Set((variant.cues ?? []).map((cue) => cue.axis))
-          const missing = tests.filter((axis) => !axes.has(axis))
-          if (missing.length) problem(where, `この場面で試す軸の手がかりがない（${missing.join('・')}）`)
+      for (const [sceneId, talk] of Object.entries(extra?.scenes ?? {})) {
+        const where = `${here} ${sceneId}`
+        if (!flow.includes(sceneId)) {
+          problem(where, 'scenes.json の flow にない場面')
+          continue
         }
+        const fields = Object.keys(talk ?? {}).filter((field) => !TALK_FIELDS.includes(field))
+        if (fields.length) problem(where, `書けるのは ${TALK_FIELDS.join('・')} だけ（${fields.join('・')} は書けない）`)
+        checkTalk(talk ?? {}, sceneId, where, true)
       }
-      checkVariants(talk.partner, 'partner')
-      if (index > 0) checkVariants(talk.after_miss, 'after_miss')
-      for (const outcome of ['best', 'good', 'miss']) {
-        const variants = talk.reactions?.[outcome]
-        if (!variants?.length) problem(here, `reactions.${outcome} がない`)
-        for (const lines of variants ?? []) if (!Array.isArray(lines) || !lines.length) problem(here, `reactions.${outcome} に空のものがある`)
-      }
+    }
+    for (const sceneId of flow) {
+      const talk = part.scenes?.[sceneId]
+      if (!talk) problem(`${at} ${sceneId}`, '話し方がない')
+      else checkTalk(talk, sceneId, `${at} ${sceneId}`)
     }
     checkSlots(part, at)
     // 書き方の決まり（07 §6）: 「…」は察してほしい人の目印なので、言葉どおりの人のセリフ（ミスのあとも、関係ごとのものも含めた昨日のやりとりも）には使わない。
-    // 反応の「…」は、だれでも自然な落胆なのでよい。締めの場面では、答えのいる質問をしない
+    // 反応の「…」は、だれでも自然な落胆なのでよい。締めの場面では、答えのいる質問をしない。場所ごとの話し方（by_relation の scenes）も同じ
     const said = (talk) => [...(talk?.partner ?? []), ...(talk?.after_miss ?? [])].flatMap((variant) => variant.lines ?? [])
+    const talkSets = [[at, part.scenes ?? {}], ...Object.entries(part.by_relation ?? {}).map(([key, extra]) => [`${at} by_relation.${key}`, extra?.scenes ?? {}])]
     if (type.C === 'literal') {
       const histories = [part.history, ...Object.values(part.by_relation ?? {}).map((extra) => extra?.history)].flatMap((list) => list ?? [])
       const history = histories.flatMap((item) => (item.messages ?? []).filter((message) => message.from === 'partner').map((message) => message.text))
-      for (const line of [...flow.flatMap((id) => said(part.scenes?.[id])), ...history].filter((text) => text?.includes('…'))) {
-        problem(at, `言葉どおりの人のセリフに「…」がある（${line}）`)
+      for (const line of history.filter((text) => text?.includes('…'))) problem(at, `言葉どおりの人のセリフに「…」がある（${line}）`)
+      for (const [where, talks] of talkSets) {
+        for (const line of flow.flatMap((id) => said(talks[id])).filter((text) => text?.includes('…'))) problem(where, `言葉どおりの人のセリフに「…」がある（${line}）`)
       }
     }
-    for (const line of said(part.scenes?.close).filter((text) => /[？?]/.test(text))) problem(`${at} close`, `締めの場面で質問している（${line}）`)
+    for (const [where, talks] of talkSets) {
+      for (const line of said(talks.close).filter((text) => /[？?]/.test(text))) problem(`${where} close`, `締めの場面で質問している（${line}）`)
+    }
     // タイプの名前は、遊んでいる間に見える文に出さない
     const visible = JSON.stringify([part.history, part.by_relation, part.scenes])
     for (const other of types.types) if (visible.includes(other.name)) problem(at, `タイプの名前（${other.name}）が出ている`)
