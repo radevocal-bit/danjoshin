@@ -527,10 +527,9 @@ button { font: inherit; color: inherit; }
 .guess-q { margin: 6px 0 18px; font-size: 21px; font-weight: 800; line-height: 1.45; }
 .guess-lead { margin: -8px 0 16px; font-size: 13px; color: var(--ink-2); }
 .axis-card { margin-bottom: 12px; padding: 14px 14px 16px; border-radius: 18px; background: var(--surface); }
-.axis-head { display: flex; align-items: baseline; gap: 8px; }
+.axis-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
 .axis-key { font-weight: 800; color: var(--accent); }
 .axis-label { font-weight: 800; }
-.axis-hint { margin: 4px 0 12px; font-size: 13px; line-height: 1.6; color: var(--muted); }
 .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .opt, .gap-opt {
   border: 1.5px solid var(--line);
@@ -538,8 +537,22 @@ button { font: inherit; color: inherit; }
   cursor: pointer;
   touch-action: manipulation;
 }
-.opt { min-height: 48px; padding: 8px; border-radius: 12px; font-size: 15px; font-weight: 700; }
-.opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: #fff; }
+.opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 48px;
+  padding: 8px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+/* 答えの下の、その答えの相手の様子。小さく薄めに（押したあとも読める濃さ） */
+.opt-sign { font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--ink-2); text-wrap: balance; word-break: auto-phrase; }
+.opt[aria-pressed="true"] { border-color: var(--accent-strong); background: var(--accent-strong); color: #fff; }
+.opt[aria-pressed="true"] .opt-sign { color: #fff; }
 .gap-opts { display: grid; gap: 8px; margin-bottom: 16px; }
 .gap-opt { padding: 12px 14px; border-radius: 14px; text-align: left; font-size: 15px; line-height: 1.6; }
 .gap-opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }

@@ -866,7 +866,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=41979cf507"
+const BUNDLE = "content/bundle.json?v=eca5cbadee"
 
 return { BUNDLE }
 })()
@@ -2689,10 +2689,17 @@ function typeGuess({ character, types, onDone }) {
     onClick: () => onDone({ kind: 'type', answers: { ...answers } }),
   }, '答え合わせ')
 
+  // 1枚ごとに、質問（question）と、それに答える2択。答えの下に、その答えの相手の様子（signs）。04 S4
   const cards = keys.map((key) => {
     const axis = types.axes[key]
+    const question = axis.question ?? axis.label
     const options = Object.entries(axis.values).map(([value, label]) => {
-      const button = h('button', { class: 'opt', type: 'button', 'aria-pressed': 'false' }, label)
+      const sign = axis.signs?.[value]
+      // 読み上げでも、答えの言葉と様子の説明を両方読む
+      const button = h('button', { class: 'opt', type: 'button', 'aria-pressed': 'false', ...(sign ? { 'aria-label': `${label}。${sign}` } : {}) },
+        h('span', { class: 'opt-label', text: label }),
+        sign ? h('span', { class: 'opt-sign', text: sign }) : null,
+      )
       button.addEventListener('click', () => {
         answers[key] = value
         for (const [other, otherButton] of options) otherButton.setAttribute('aria-pressed', String(other === value))
@@ -2704,16 +2711,16 @@ function typeGuess({ character, types, onDone }) {
     return h('div', { class: 'axis-card' },
       h('p', { class: 'axis-head' },
         h('span', { class: 'axis-key', text: key }),
-        h('span', { class: 'axis-label', text: axis.label }),
+        h('span', { class: 'axis-label', text: question }),
       ),
-      h('p', { class: 'axis-hint', text: `ヒント: ${axis.hint}` }),
-      h('div', { class: 'opts', role: 'group', 'aria-label': axis.label }, options.map(([, button]) => button)),
+      h('div', { class: 'opts', role: 'group', 'aria-label': question }, options.map(([, button]) => button)),
     )
   })
 
   return h('section', { class: 'screen page guess' },
     h('p', { class: 'kicker', text: 'タイプ推理' }),
     h('h2', { class: 'guess-q', text: `${character.name}はどんなタイプだと思う？` }),
+    h('p', { class: 'guess-lead', text: `4つとも、${character.name}に近いほうを選ぼう` }),
     cards,
     h('div', { class: 'btn-row' },
       submit,
