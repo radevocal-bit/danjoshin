@@ -1057,7 +1057,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=49122b70e7"
+const BUNDLE = "content/bundle.json?v=f4017a74e5"
 
 return { BUNDLE }
 })()
@@ -1092,9 +1092,12 @@ function isMiss(choice, rules) {
   return rules.miss_grades.includes(choice.grade) || (rules.miss_manners ?? []).includes(choice.manners)
 }
 
-/** その手で出すセリフと手がかり。直前がミスなら partner_after_miss / cues_after_miss を使う */
-function stepContent(step, previousChoice, rules) {
-  const afterMiss = Boolean(step.partner_after_miss) && isMiss(previousChoice, rules)
+/**
+ * その手で出すセリフと手がかり。直前がミスなら partner_after_miss / cues_after_miss を使う。
+ * missed: ミスのあとの言い回しにするか（なければ直前の返事で決める。上級の毎回初見の場面の最初の手は、前の場面の出来で決まる。07 §13.3）
+ */
+function stepContent(step, previousChoice, rules, missed = isMiss(previousChoice, rules)) {
+  const afterMiss = Boolean(step.partner_after_miss) && missed
   return {
     afterMiss,
     lines: afterMiss ? step.partner_after_miss : step.partner,
@@ -1383,14 +1386,15 @@ function scenesFor(free, spot) {
 }
 
 /**
- * 流れ（07 §11.2・§12.2）。id: flows のキー（組み立てた話の free.flow）。null か flows にないキーなら、お祝いの flow（初級。リアルで使える一言は決める場面）
- * → { id（お祝いの flow なら null）, kind（なければキー）, tier（なければ初級）, flow, real_line, intro（会う場面の紹介の2文め） }
+ * 流れ（07 §11.2・§12.2・§13.2）。id: flows のキー（組み立てた話の free.flow）。null か flows にないキーなら、お祝いの flow（初級。リアルで使える一言は決める場面）。
+ * 上級の流れは parts（場面のならび。mode・label・flow）で書き、flow はその flow をつないだもの
+ * → { id（お祝いの flow なら null）, kind（なければキー）, tier（なければ初級）, flow, parts（なければ null）, real_line, intro（会う場面の紹介の2文め） }
  */
 function flowOf(scenes, id) {
   const route = id != null ? scenes.flows?.[id] : null
-  return route
-    ? { id, kind: route.kind ?? id, tier: route.tier ?? 'beginner', flow: route.flow, real_line: route.real_line, intro: route.intro }
-    : { id: null, kind: null, tier: 'beginner', flow: scenes.flow, real_line: 'decide' }
+  if (!route) return { id: null, kind: null, tier: 'beginner', flow: scenes.flow, parts: null, real_line: 'decide' }
+  const parts = route.parts ?? null
+  return { id, kind: route.kind ?? id, tier: route.tier ?? 'beginner', flow: parts ? parts.flatMap((part) => part.flow) : route.flow, parts, real_line: route.real_line, intro: route.intro }
 }
 
 /**
@@ -1482,7 +1486,8 @@ function buildStep({ sceneId, index, scenes, talk, type, fill, random, face = fa
  *   （層に names・icon があれば、相手の名前とアイコンの字はそこから。07 §9.3）
  * gender: 相手の性別（関係のページの切りかえか、開くときにランダム）/ pairing: 話の pairing（関係の pairing。恋愛・夫婦は opposite）
  * tier: 段階（なければ初級）。中級なら会う場面（07 §12）: 題材はその段階の流れがある kind のもの、場所の層の meet.places から会う店を1つ、
- *   話は固定の話 itsuki_01 と同じく会う場面1つ（背景・最初の地の文・表情と地の文つきの相手・店員さん）。昨日のやりとりはない
+ *   話は固定の話 itsuki_01 と同じく会う場面1つ（背景・最初の地の文・表情と地の文つきの相手・店員さん）。昨日のやりとりはない。
+ *   上級（07 §13）は、流れの parts の順に場面を作る（固定の話 misaki_02 と同じく、メッセージ・会う・メッセージ。昨日のやりとりは最初の場面の上）
  * last: 前回の相手 { type, name }（同じタイプ・名前は続けない）/ random: 乱数（テストでは種を決めたものを渡す）
  * → { free: true, category, segment, episode, character }（今までの話と同じ形。★2）
  */
@@ -1491,11 +1496,11 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', tier 
   const layer = free.relations?.spots?.[key]
   if (!layer) throw new Error(`毎回初見の場所「${key}」が relations.json にない`)
   const scenes = layeredScenes(free.scenes, layer)
-  const face = tier !== 'beginner'
+  const meet = tier !== 'beginner' // 中級からは会う店がある
   // 題材は、その段階の流れがある kind のもの（初級は、flows にない kind もお祝いの flow で）
   const topics = layer.topics.map((id) => free.topics.topics.find((item) => item.id === id)).filter((topic) => routeOf(scenes, topic.kind, tier))
   const places = layer.meet?.places ?? []
-  if (!topics.length || (face && !places.length)) throw new Error(`毎回初見の場所「${key}」では、段階「${tier}」の話を組み立てられない（その段階の流れの題材と、会う店がいる）`)
+  if (!topics.length || (meet && !places.length)) throw new Error(`毎回初見の場所「${key}」では、段階「${tier}」の話を組み立てられない（その段階の流れの題材と、会う店がいる）`)
   const typeIds = types.types.map((type) => type.id).filter((id) => free.types[id])
   const typeId = pickNew(typeIds, last?.type, random)
   const type = types.types.find((item) => item.id === typeId)
@@ -1505,9 +1510,9 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', tier 
   const topic = pick(topics, random)
   const who = pick(Array.isArray(layer.who) ? layer.who : layer.who[gender], random) // 夫婦の妻・夫は、相手の性別で
   const status = layer.status?.length ? pick(layer.status, random) : null
-  // メッセージは時間帯、会う場面は会う店（紹介の {place}・店員さんの場面の返事の {menu}。07 §12.6）
-  const time = face ? null : pick(layer.times, random)
-  const place = face ? pick(places, random) : null
+  // メッセージは時間帯、会う場面は会う店（紹介・場面の札の {place}・店員さんの場面の返事の {menu}。07 §12.6・§13.6）
+  const time = meet ? null : pick(layer.times, random)
+  const place = meet ? pick(places, random) : null
   const words = { ...wordsOf(topic), name, ...(place ? { place: place.name, menu: place.menu } : {}) }
   const fill = (value) => fillSlots(value, words)
 
@@ -1526,13 +1531,31 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', tier 
   // 相手の話し方は、その場所のもの（by_relation の scenes。07 §10.3）があれば、書いた項目（partner・after_miss・reactions）だけそこから。
   // 会う場面は、タイプの face_scenes から
   const placed = part.by_relation?.[key]?.scenes ?? {}
-  // 流れは題材の kind と段階で決まる（相談なら 打ち明け→どうする→頼るかどうか→締め。07 §11.2。中級は会って相談の8手。§12.2）
+  // 流れは題材の kind と段階で決まる（相談なら 打ち明け→どうする→頼るかどうか→締め。07 §11.2。中級は会って相談の8手。§12.2。
+  // 上級はメッセージ・会う・メッセージの10手。§13.2）。場面のならびは、初級はメッセージ1つ、中級は会う場面1つ、上級は parts
   const route = routeOf(scenes, topic.kind, tier)
-  const talkOf = (sceneId) => (face ? part.face_scenes[sceneId] : { ...part.scenes[sceneId], ...placed[sceneId] })
-  const steps = route.flow.map((sceneId, index) => buildStep({ sceneId, index, scenes, talk: talkOf(sceneId), type, fill, random, face }))
+  const sections = route.parts ?? [{ mode: meet ? 'face' : 'chat', flow: route.flow }]
+  const modes = sections.flatMap((section) => section.flow.map(() => section.mode)) // 手ごとに、会う場面（face）かメッセージ（chat）か
+  const talkOf = (sceneId, face) => (face ? part.face_scenes[sceneId] : { ...part.scenes[sceneId], ...placed[sceneId] })
+  const steps = route.flow.map((sceneId, index) => {
+    const face = modes[index] === 'face'
+    return buildStep({ sceneId, index, scenes, talk: talkOf(sceneId, face), type, fill, random, face })
+  })
   const realStep = steps[route.flow.indexOf(route.real_line)]
   // 昨日のやりとりは、その場所のもの（by_relation。07 §8.4）があればそこから
   const histories = part.by_relation?.[key]?.history?.length ? part.by_relation[key].history : part.history
+  // 場面: 会う場面は、札が会う店の名前（上級は part の label。夫婦などは meet.adv_labels）・背景は店の background・最初の地の文は店の opening。
+  // 上級の2つめからの場面は、最初の手を前の場面の出来で決める（rough_first_step・rough_min_misses。07 §13.3。runEpisode）
+  const labels = tier === 'advanced' ? layer.meet?.adv_labels : null
+  const starts = sections.map((_, n) => sections.slice(0, n).reduce((sum, section) => sum + section.flow.length, 0))
+  const sceneOf = (section, n) => ({
+    id: route.parts ? `s${n + 1}` : 'meet',
+    label: fill(labels?.[n] ?? section.label ?? place.name),
+    mode: section.mode,
+    ...(section.mode === 'face' ? { background: place.background, opening: [{ who: 'narration', text: fill(place.opening) }] } : {}),
+    steps: steps.slice(starts[n], starts[n] + section.flow.length),
+    ...(n ? { rough_first_step: true, ...(section.rough_min_misses ? { rough_min_misses: section.rough_min_misses } : {}) } : {}),
+  })
   const episode = {
     id: `${FREE_ID}_${typeId}_${topic.id}`,
     character: FREE_ID,
@@ -1540,21 +1563,18 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', tier 
     pairing,
     title: topic.title,
     // 紹介: 「{who}の{name}。{status}」（status がない場所は1文だけ）と「{time}、{name}からメッセージが届いた。」。
-    // 会う場面は2文めが流れの intro（「…{place}で会うことになった。」）
-    intro: fill(`${who}の{name}。${status ?? ''}\n${face ? route.intro : `${time}、{name}からメッセージが届いた。`}`),
-    ...(face ? {} : { history: { label: '昨日', ...fill(pick(histories, random)) } }),
+    // 会う場面のある話は2文めが流れの intro（中級「…{place}で会うことになった。」。上級は、場所の meet.adv_intro があればそれ）
+    intro: fill(`${who}の{name}。${status ?? ''}\n${meet ? (tier === 'advanced' && layer.meet?.adv_intro) || route.intro : `${time}、{name}からメッセージが届いた。`}`),
+    ...(meet && !route.parts ? {} : { history: { label: '昨日', ...fill(pick(histories, random)) } }),
     exit: [],
-    // 会う場面は1つ（場面の札は会う店の名前。最初の地の文は会う店の opening）
-    ...(face
-      ? { scenes: [{ id: 'meet', label: place.name, mode: 'face', background: place.background, opening: [{ who: 'narration', text: fill(place.opening) }], steps }] }
-      : { steps }),
+    ...(meet ? { scenes: sections.map(sceneOf) } : { steps }),
     result: {
       // リアルで使える一言は、その流れの real_line の場面（お祝いは決める場面）の最適の返事。学べることは、遊んだあとに決める（freeLessons）
       real_line: realStep ? bestChoice(realStep)?.text ?? null : null,
       learn: [],
     },
     // flow: 使った流れ（flows のキー。お祝いの flow なら null）
-    free: { spot: key, topic: topic.id, flow: route.id, who, status, ...(face ? { place: place.name } : { time }) },
+    free: { spot: key, topic: topic.id, flow: route.id, who, status, ...(meet ? { place: place.name } : { time }) },
   }
   return { free: true, category: spot.category, segment: spot.segment ?? null, episode, character }
 }
@@ -1931,7 +1951,8 @@ function validateStory({ story, variants }, { rules, types, names, backgrounds =
  * {…} が残らない、となるように、部品の側を確かめる。関係の層（relations.json。07 §8.6）は、場所ごとに重ねたあとでも同じことを確かめる。
  * 流れが2つ以上（flow と、題材の kind・段階 tier ごとの flows。07 §11・§12）なら、どの流れの場面も同じ決まりで。
  * 中級からは会う場面（07 §12）: タイプの話し方は face_scenes（行はセリフ { say, face } か地の文 { act }）、店員さんの場面（third_party）、
- * 会う店（relations.json の場所の meet.places）も見る
+ * 会う店（relations.json の場所の meet.places）も見る。上級（07 §13）の流れは parts（場面のならび）で書き、場面はその flow をつないだもの。
+ * 話し方は part の mode で決まる（chat は scenes、face は face_scenes）
  * categories: categories.json（渡せば、free: true の場所と relations.json のキーがそろっているかも見る）/ backgrounds: 絵がある背景ID
  */
 function validateFree(free, { rules, types, categories = null, backgrounds = BACKGROUND_IDS }) {
@@ -1939,12 +1960,23 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
   const problem = (where, message) => problems.push(`free${where}: ${message}`)
   const { scenes = {}, topics = {}, relations = {} } = free
   const flow = scenes.flow ?? []
-  // 流れ（07 §11.2・§12.2）: お祝いの flow（初級）と flows。flows の流れは、題材の kind（なければキー）と段階 tier（なければ初級）ごと
-  const routes = [{ kind: null, tier: 'beginner', flow, at: '' }, ...Object.entries(scenes.flows ?? {}).map(([id, item]) => ({ kind: item?.kind ?? id, tier: item?.tier ?? 'beginner', flow: item?.flow ?? [], real_line: item?.real_line, intro: item?.intro, at: ` scenes.json flows.${id}` }))]
-  const idsOf = (list) => [...new Set(list.flatMap((route) => route.flow))]
-  const sceneIds = idsOf(routes) // どれかの流れに出る場面
-  const chatIds = idsOf(routes.filter((route) => route.tier === 'beginner')) // メッセージの場面（話し方はタイプの scenes）
-  const faceIds = idsOf(routes.filter((route) => route.tier !== 'beginner')) // 会う場面（話し方はタイプの face_scenes）
+  // 流れ（07 §11.2・§12.2・§13.2）: お祝いの flow（初級）と flows。flows の流れは、題材の kind（なければキー）と段階 tier（なければ初級）ごと。
+  // parts のある流れは、parts の flow をつないだもの
+  const routes = [{ kind: null, tier: 'beginner', flow, at: '' }, ...Object.entries(scenes.flows ?? {}).map(([id, item]) => {
+    const parts = Array.isArray(item?.parts) ? item.parts : null
+    return { item, parts, kind: item?.kind ?? id, tier: item?.tier ?? 'beginner', flow: parts ? parts.flatMap((part) => part?.flow ?? []) : item?.flow ?? [], real_line: item?.real_line, intro: item?.intro, at: ` scenes.json flows.${id}` }
+  })]
+  // 場面の形: parts の流れは part の mode、ほかは初級ならメッセージ（chat）、中級からは会う場面（face）
+  const cells = routes.flatMap((route) => (route.parts
+    ? route.parts.flatMap((part) => (part?.flow ?? []).map((id) => [id, part?.mode]))
+    : route.flow.map((id) => [id, route.tier === 'beginner' ? 'chat' : 'face'])))
+  const idsOf = (mode) => [...new Set(cells.filter((cell) => cell[1] === mode).map(([id]) => id))]
+  const sceneIds = [...new Set(routes.flatMap((route) => route.flow))] // どれかの流れに出る場面
+  const chatIds = idsOf('chat') // メッセージの場面（話し方はタイプの scenes）
+  const faceIds = idsOf('face') // 会う場面（話し方はタイプの face_scenes）
+  for (const id of chatIds.filter((sceneId) => faceIds.includes(sceneId))) problem(` ${id}`, 'メッセージの場面（chat）と会う場面（face）の両方に出ている（どちらかにする）')
+  // 返事の文に会う店の名前 {place} を使えるのは、parts の流れの場面（会う店のない初級の流れには出ない場面だけ）
+  const placeIds = new Set(routes.filter((route) => route.parts).flatMap((route) => route.flow).filter((id) => !routes.some((route) => route.tier === 'beginner' && route.flow.includes(id))))
   const later = new Set(routes.flatMap((route) => route.flow.slice(1))) // 流れの2手め以降（ミスのあとの言い回しがいる）
   const lasts = [...new Set(routes.map((route) => route.flow.at(-1)).filter(Boolean))] // 流れの最後（締め。質問しない）
   const spots = relations.spots ?? {}
@@ -2058,8 +2090,9 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
       if (bests !== 1) add(at, `${type.id} に合う核が ${bests} 個（ちょうど1つにする）`)
       for (const extra of extras) if (gradeExtra(extra, type).grade === 'best') add(at, `${extra.id} が ${type.id} で best になる`)
     }
-    // 注文の品 {menu}（会う店の言葉）は、店員さんの場面の文だけ
-    for (const message of slotProblems(scene, staff ? [...allowedOf(sceneId), MENU_SLOT] : allowedOf(sceneId))) add(at, message)
+    // 注文の品 {menu}（会う店の言葉）は店員さんの場面の文だけ。店の名前 {place} は上級の流れの場面の文だけ（07 §13.5）
+    const own = [...(staff ? [MENU_SLOT] : []), ...(placeIds.has(sceneId) ? [PLACE_SLOT] : [])]
+    for (const message of slotProblems(scene, [...allowedOf(sceneId), ...own])) add(at, message)
     return found
   })
   const base = formProblems(scenes)
@@ -2073,6 +2106,24 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
     if (!route.kind) continue
     if (!TIER_IDS.includes(route.tier)) problem(route.at, `tier「${route.tier}」は ${TIER_IDS.join(' / ')}`)
     if (routes.slice(1, i).some((other) => other.kind === route.kind && other.tier === route.tier)) problem(route.at, `kind「${route.kind}」と tier「${route.tier}」が同じ流れが、ほかにもある`)
+    // 上級の流れの場面のならび parts（07 §13.2）: 2つ以上。part は mode（chat か face）・label（{place} は会う店の名前）・flow（1つ以上）。
+    // rough_min_misses（前の場面のミスが何回からミスのあとの言い回しか）は1以上の整数で、2つめの part から
+    const raw = route.item?.parts
+    if (raw != null) {
+      if (route.tier === 'beginner') problem(route.at, 'parts は中級からの流れだけ（初級は flow）')
+      if (route.item.flow != null) problem(route.at, 'flow と parts の両方がある（parts だけにする）')
+      if (!Array.isArray(raw) || raw.length < 2) problem(route.at, 'parts は2つ以上の場面のならび')
+      for (const [n, part] of (Array.isArray(raw) ? raw : []).entries()) {
+        const where = `${route.at} parts${n + 1}`
+        if (!['chat', 'face'].includes(part?.mode)) problem(where, `mode「${part?.mode ?? ''}」は chat / face`)
+        if (typeof part?.label !== 'string' || !part.label.trim()) problem(where, 'label がない')
+        else checkSlots(part.label, where, [PLACE_SLOT])
+        if (!Array.isArray(part?.flow) || !part.flow.length) problem(where, 'flow がない（1つ以上）')
+        if (part?.rough_min_misses == null) continue
+        if (n === 0) problem(where, '最初の場面には rough_min_misses を書かない（前の場面がない）')
+        else if (!Number.isInteger(part.rough_min_misses) || part.rough_min_misses < 1) problem(where, `rough_min_misses は1以上の整数（${part.rough_min_misses}）`)
+      }
+    }
     if (!route.flow.length) problem(route.at, 'flow がない')
     if (!route.flow.includes(route.real_line)) problem(route.at, `real_line「${route.real_line ?? ''}」が、この流れの場面にない`)
     if (route.tier === 'beginner') continue
@@ -2145,6 +2196,17 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
       if ([place?.name, place?.menu].some((text) => /[{}]/.test(text ?? ''))) problem(where, 'name と menu に {…} を書かない（ほかの文に入れる言葉）')
       checkSlots(place?.opening, where, [NAME_SLOT])
     }
+    // 上級だけ変える場面の札と紹介（07 §13.6。夫婦）。札は上級の流れの parts と同じ数（{place} は会う店の名前）
+    const { adv_labels: labels, adv_intro: advIntro } = layer.meet ?? {}
+    if (labels != null && (!Array.isArray(labels) || labels.some((label) => typeof label !== 'string' || !label.trim()))) problem(at, 'meet.adv_labels は空でない文字の配列')
+    else if (labels != null) {
+      for (const route of routes.filter((item) => item.parts && item.tier === 'advanced')) {
+        if (labels.length !== route.parts.length) problem(at, `meet.adv_labels の数（${labels.length}）が、${route.at.trim()} の parts の数（${route.parts.length}）とちがう`)
+      }
+      checkSlots(labels, `${at} meet.adv_labels`, [PLACE_SLOT])
+    }
+    if (advIntro != null && (typeof advIntro !== 'string' || !advIntro.trim())) problem(at, 'meet.adv_intro が空')
+    checkSlots(advIntro, `${at} meet.adv_intro`, [...common, PLACE_SLOT])
     for (const [id, patch] of Object.entries(layer.forms ?? {})) {
       const kind = kinds.get(id)
       if (!kind) {
@@ -2432,14 +2494,20 @@ async function runEpisode({ episode, character, rules, director, pairing = null,
     const view = await director.enterScene(scene, index)
     // 前の場面の出来が、会ったときの最初の表情に出る
     const opening = openingFor(scene, previousSceneMisses, rules)
-    scenes.push({ scene, rough: opening.rough })
+    const entry = { scene, rough: opening.rough }
+    scenes.push(entry)
     for (const line of opening.lines) await view.partner(line, null)
 
+    // 上級の毎回初見（07 §13.3）: rough_first_step の場面は、最初の手を、直前の返事ではなく前の場面のミスの数で決める
+    // （区切りは場面の rough_min_misses、なければ rules の rough_scene_min_misses）。そうなったら、結果に「はじめの様子が変わっていた」を出す
+    const roughFirst = previousSceneMisses != null && previousSceneMisses >= (scene.rough_min_misses ?? rules.rough_scene_min_misses ?? 1)
     let misses = 0
-    for (const original of scene.steps) {
+    for (const [n, original] of scene.steps.entries()) {
       // 同性・異性で1手だけ入れかわる（06 §6.5）
       const { step, variant } = stepFor(original, pairing)
-      const { afterMiss, lines, cues } = stepContent(step, previous, rules)
+      const first = n === 0 && Boolean(scene.rough_first_step)
+      const { afterMiss, lines, cues } = stepContent(step, previous, rules, first ? roughFirst : undefined)
+      if (first && afterMiss) entry.rough = true
       for (const line of lines) await view.partner(line, step)
 
       // データでは最適解が先頭に多いので、表示順は毎回シャッフル
