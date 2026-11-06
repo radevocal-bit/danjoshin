@@ -95,6 +95,8 @@ const HAIR_COLORS = {
   brown: '#6E4A33',
   light_brown: '#9A7050',
   ash: '#8C8B90',
+  gray: '#A29E98', // 白髪まじり（親の年齢。07 §9.6）
+  silver: '#CFCBC5',
 }
 
 const CLOTHES_COLORS = {
@@ -123,6 +125,7 @@ const EYES = {
   round: { rx: 7.2, ry: 8.4, iris: 5.4, browY: 81 },
   narrow: { rx: 8.4, ry: 4.9, iris: 4.1, browY: 85 },
   droopy: { rx: 7.6, ry: 7.2, iris: 5.1, browY: 82, tilt: 9 },
+  small: { rx: 6.2, ry: 5.6, iris: 4.4, browY: 86, lash: 1.8 }, // 小さめで、目の上の線も細い（父さん。07 §9.6）
 }
 
 const BROWS = {
@@ -146,6 +149,22 @@ const MOUTHS = {
 }
 
 const FACE_SHAPE = 'M56 86C56 53 76 38 100 38C124 38 144 53 144 86C144 114 126 137 100 139C74 137 56 114 56 86Z'
+
+// 親の年齢の見た目（07 §9.6）。look に age・jaw・nose・lips・brows・build・facial_hair を書いたときだけ。書かなければ今までの絵
+const LOOK_OPTIONS = {
+  age: ['older'], // ほうれい線
+  jaw: ['square'], // あごの張った輪郭
+  nose: [true, false], // 鼻の線
+  lips: ['plain'], // 赤みをおさえた口
+  brows: ['thick'], // 太くまっすぐな眉
+  build: ['broad'], // 首と肩を少し広く
+  facial_hair: ['mustache'], // 口ひげ
+}
+const FACE_SQUARE = 'M56 84C56 52 76 38 100 38C124 38 144 52 144 84C144 106 140 121 131 131C123 139 112 142 100 142C88 142 77 139 69 131C60 121 56 106 56 84Z'
+const OLDER_LINES = '<path d="M89 108.5Q85.5 114 88.5 119.5M111 108.5Q114.5 114 111.5 119.5" fill="none" stroke="#D9A68E" stroke-width="1.7" stroke-linecap="round"/>'
+const NOSE = '<path d="M101 101Q104.5 108.5 99.5 110.5" fill="none" stroke="#D49F87" stroke-width="1.8" stroke-linecap="round"/>'
+const MUSTACHE = 'M89.5 116.2Q94.5 111.6 100 114.4Q105.5 111.6 110.5 116.2Q105.5 117.4 100 116.4Q94.5 117.4 89.5 116.2Z'
+const LIPS_PLAIN = '#8F5E55'
 
 // 髪型: back は頭の後ろ、front は前髪（と顔の前に落ちる髪）。coversEars なら耳を描かない
 const HAIR = {
@@ -201,9 +220,40 @@ const HAIR = {
       'M147 88H140V108L145 105Z',
     ],
   },
+  // 親の年齢の髪型（07 §9.6）: 七三分け・M字の生え際・ふんわりショート
+  side_part: {
+    coversEars: false,
+    back: ['M51 90C49 55 72 31 100 31C128 31 151 55 149 90C146 84 141 81 135 80H65C59 81 54 84 51 90Z'],
+    front: [
+      'M52 88C49 57 71 33 100 32C129 33 151 57 148 88L145 79C143 73 140 69 136 66C126 61 113 59 99 59C93 59 88 60 84 61L80 51L76 62C69 65 63 70 59 76C56 81 54 84 52 88Z',
+      'M54 86H60V98L55 97Z',
+      'M146 86H140V98L145 97Z',
+    ],
+  },
+  receding: {
+    coversEars: false,
+    back: ['M51 90C49 55 72 31 100 31C128 31 151 55 149 90C146 84 141 81 135 80H65C59 81 54 84 51 90Z'],
+    front: [
+      'M52 88C49 57 71 33 100 32C129 33 151 57 148 88C146 80 143 73 139 68C134 61 128 56 121 53C115 56 109 58 100 58C91 58 85 56 79 53C72 56 66 61 61 68C57 73 54 80 52 88Z',
+      'M54 86H60V98L55 97Z',
+      'M146 86H140V98L145 97Z',
+    ],
+  },
+  short_soft: {
+    coversEars: true,
+    back: ['M46 97C43 52 70 28 100 28C130 28 157 52 154 97C154 110 152 120 148 127C140 131 60 131 52 127C48 120 46 110 46 97Z'],
+    front: [
+      'M54 93C51 56 73 33 100 33C127 33 149 56 146 93C143 82 138 74 131 69C120 70 106 74 94 79C84 83 72 86 62 87C59 89 56 91 54 93Z',
+      'M55 85C49 99 50 114 56 126L67 124C62 112 62 99 66 88Z',
+      'M145 85C151 99 150 114 144 126L133 124C138 112 138 99 134 88Z',
+    ],
+  },
 }
 
 const BODY = 'M26 224C28 183 55 163 100 161C145 163 172 183 174 224Z'
+const BODY_BROAD = 'M18 224C21 181 52 160 100 158C148 160 179 181 182 224Z' // build: broad
+const NECK = 'M88.5 126H111.5V164H88.5Z'
+const NECK_BROAD = 'M85 128H115V164H85Z'
 
 // 服: under は首より後ろ（フードなど）、over は体の上に描く
 const CLOTHES = {
@@ -275,6 +325,9 @@ function lookProblems(look) {
   if (look.accessory != null && !['glasses', 'earrings'].includes(look.accessory)) {
     problems.push(`accessory「${look.accessory}」の描き方がない`)
   }
+  for (const [key, values] of Object.entries(LOOK_OPTIONS)) {
+    if (look[key] != null && !values.includes(look[key])) problems.push(`${key}「${look[key]}」の描き方がない`)
+  }
   return problems
 }
 
@@ -284,7 +337,8 @@ function characterSvg(character, faceId = 'normal', crop = 'bust') {
   const face = FACES[faceId] ?? FACES.normal
   const hair = HAIR[look.hair] ?? HAIR.short_messy
   const hairColor = HAIR_COLORS[look.hair_color] ?? HAIR_COLORS.dark_brown
-  const browColor = mix(hairColor, '#000000', 0.25)
+  const thickBrows = look.brows === 'thick'
+  const browColor = mix(hairColor, '#000000', thickBrows ? 0.5 : 0.25) // 太い眉は濃く（口ひげも同じ色）
   const clothColor = CLOTHES_COLORS[look.clothes_color] ?? CLOTHES_COLORS.gray
   const clothes = (CLOTHES[look.clothes] ?? CLOTHES.plain)({
     base: clothColor,
@@ -296,20 +350,23 @@ function characterSvg(character, faceId = 'normal', crop = 'bust') {
   const parts = [
     ...hair.back.map((d) => `<path d="${d}" fill="${hairColor}"/>`),
     clothes.under,
-    `<path d="M88.5 126H111.5V164H88.5Z" fill="${SKIN_DEEP}"/>`,
-    `<path d="${BODY}" fill="${clothColor}"/>`,
+    `<path d="${look.build === 'broad' ? NECK_BROAD : NECK}" fill="${SKIN_DEEP}"/>`,
+    `<path d="${look.build === 'broad' ? BODY_BROAD : BODY}" fill="${clothColor}"/>`,
     clothes.over,
     hair.coversEars ? '' : `<ellipse cx="56.5" cy="97" rx="6" ry="9" fill="${SKIN_DEEP}"/><ellipse cx="143.5" cy="97" rx="6" ry="9" fill="${SKIN_DEEP}"/>`,
-    `<path d="${FACE_SHAPE}" fill="${SKIN}"/>`,
+    `<path d="${look.jaw === 'square' ? FACE_SQUARE : FACE_SHAPE}" fill="${SKIN}"/>`,
     face.blush ? blush(face.blush, face.shyLines) : '',
     eye(82, 96, -1, eyeShape, face.eyes),
     eye(118, 96, 1, eyeShape, face.eyes),
-    mouth(face.mouth),
+    look.nose === true ? NOSE : '',
+    look.facial_hair === 'mustache' ? `<path d="${MUSTACHE}" fill="${browColor}"/>` : '',
+    mouth(face.mouth, look.lips === 'plain' ? LIPS_PLAIN : MOUTH),
+    look.age === 'older' ? OLDER_LINES : '',
     ...hair.front.map((d) => `<path d="${d}" fill="${hairColor}"/>`),
     hair.ornament ?? '',
     // 眉は前髪の上に描く（表情が読めるように）
-    brow(82, eyeShape.browY, -1, face.brows, browColor),
-    brow(118, eyeShape.browY, 1, face.brows, browColor),
+    brow(82, eyeShape.browY, -1, face.brows, browColor, thickBrows),
+    brow(118, eyeShape.browY, 1, face.brows, browColor, thickBrows),
     accessory(look.accessory, hair.coversEars),
   ]
   const label = escapeText(`${character.name ?? ''}（${faceId}）`)
@@ -341,23 +398,26 @@ function eye(cx, cy, side, shape, state) {
       `<circle cx="${cx + dx - iris * 0.34}" cy="${cy + dy - iris * 0.4}" r="${iris * 0.33}" fill="#FFFFFF"/>` +
       (lid ? `<rect x="${cx - rx - 1}" y="${top - 1}" width="${rx * 2 + 2}" height="${lidY - top + 1}" fill="${SKIN}"/>` : '') +
       `</g>` +
-      `<path d="${lash}" ${stroke} stroke-width="2.6"/>`
+      `<path d="${lash}" ${stroke} stroke-width="${shape.lash ?? 2.6}"/>`
   }
   return shape.tilt ? `<g transform="rotate(${side * shape.tilt} ${cx} ${cy})">${body}</g>` : body
 }
 
-function brow(cx, y, side, kind, color) {
+/** 眉。thick（太くまっすぐ。07 §9.6）は、太さ 4.6・少し長く・表情の弧を 0.45 倍に */
+function brow(cx, y, side, kind, color, thick = false) {
   const [innerDy, outerDy, middleDy] = BROWS[kind] ?? BROWS.neutral
-  const inner = cx - side * 6.5
-  const outer = cx + side * 7.5
-  return `<path d="M${inner} ${y + innerDy}Q${(inner + outer) / 2} ${y + middleDy} ${outer} ${y + outerDy}" fill="none" stroke="${color}" stroke-width="2.8" stroke-linecap="round"/>`
+  const inner = cx - side * (thick ? 7.5 : 6.5)
+  const outer = cx + side * (thick ? 8.8 : 7.5)
+  const middle = thick ? middleDy * 0.45 : middleDy
+  return `<path d="M${inner} ${y + innerDy}Q${(inner + outer) / 2} ${y + middle} ${outer} ${y + outerDy}" fill="none" stroke="${color}" stroke-width="${thick ? 4.6 : 2.8}" stroke-linecap="round"/>`
 }
 
-function mouth(kind) {
+/** 口。color は線の色（lips: plain なら赤みをおさえた色）。open_smile の塗りは同じ */
+function mouth(kind, color = MOUTH) {
   if (kind === 'open_smile') {
     return `<path d="M91.5 119.5Q100 132 108.5 119.5Z" fill="${MOUTH}"/><ellipse cx="100" cy="126" rx="3.6" ry="2" fill="#E2878A"/>`
   }
-  return `<path d="${MOUTHS[kind] ?? MOUTHS.closed_smile}" fill="none" stroke="${MOUTH}" stroke-width="2.4" stroke-linecap="round"/>`
+  return `<path d="${MOUTHS[kind] ?? MOUTHS.closed_smile}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round"/>`
 }
 
 function blush(opacity, lines) {
@@ -866,7 +926,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=eca5cbadee"
+const BUNDLE = "content/bundle.json?v=a1b3e818f1"
 
 return { BUNDLE }
 })()
@@ -1020,8 +1080,9 @@ function pickNew(list, last, random = Math.random) {
   return pick(rest.length ? rest : list, random)
 }
 
-function randomLook(gender, random = Math.random) {
-  return Object.fromEntries(Object.entries(LOOKS[gender] ?? LOOKS.female).map(([key, values]) => [key, pick(values, random)]))
+/** 見た目を、候補の表（項目ごとの候補。なければ LOOKS[gender]）から項目ごとにランダムに選ぶ */
+function randomLook(gender, random = Math.random, table = LOOKS[gender] ?? LOOKS.female) {
+  return Object.fromEntries(Object.entries(table).map(([key, values]) => [key, pick(values, random)]))
 }
 
 /** 文の中の {キー} を words の言葉に置きかえる（入れ子の中の文字列も全部）。元のデータは変えない */
@@ -1283,7 +1344,7 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', last 
     switches: [],
     style: part.style,
     icon_text: layer.icon?.[gender] ?? [...name][0], // 関係の層に icon があればその字（相手が親の「母」「父」）
-    look: randomLook(gender, random),
+    look: randomLook(gender, random, layer.looks?.[gender]), // 関係の層に looks があればその候補から（相手が親の年齢の見た目。07 §9.6）
   }
   // 相手の話し方は、その場所のもの（by_relation の scenes。07 §10.3）があれば、書いた項目（partner・after_miss・reactions）だけそこから
   const placed = part.by_relation?.[key]?.scenes ?? {}
@@ -1354,6 +1415,7 @@ __modules["js/data.js"] = (() => {
 // 組み立てたもの（dist/）は、まとめたデータ1つ（content/bundle.json）を1回で読む。
 // npm start で直に動かすときは、content/ を1つずつ読む（書きかえたらすぐ確かめられるように）。
 
+const { lookProblems } = __modules["js/art/index.js"]
 const { BUNDLE } = __modules["js/build-info.js"]
 const { freeSpots, spotKey } = __modules["js/catalog.js"]
 const { FORM_FIELDS, gradeCore, gradeExtra, layeredScenes, slotsOf, wordsOf } = __modules["js/free.js"]
@@ -1838,6 +1900,21 @@ function validateFree(free, { rules, types, categories = null }) {
         const icon = layer.icon[gender]
         if (typeof icon !== 'string' || !icon.trim()) problem(at, `icon の ${gender} がない`)
         else if ([...icon].length !== 1) problem(at, `icon の ${gender} は1字にする（「${icon}」）`)
+      }
+    }
+    // 見た目の候補（07 §9.6。なくてよい）。相手の性別ごとに、項目ごとの候補（空でない配列）。どの候補も絵が描ける（null はよい）
+    if (layer.looks != null && !byGender(layer.looks)) problem(at, 'looks は { "female": {...}, "male": {...} } の形')
+    else if (layer.looks != null) {
+      for (const gender of ['female', 'male']) {
+        const table = layer.looks[gender]
+        if (!byGender(table)) {
+          problem(at, `looks の ${gender} がない`)
+          continue
+        }
+        for (const [key, values] of Object.entries(table)) {
+          if (!Array.isArray(values) || !values.length) problem(at, `looks の ${gender}.${key} が空（候補を1つ以上）`)
+          else for (const value of values) for (const message of lookProblems({ [key]: value })) problem(at, `looks の ${gender}: ${message}`)
+        }
       }
     }
     for (const [id, patch] of Object.entries(layer.forms ?? {})) {
