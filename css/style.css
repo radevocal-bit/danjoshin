@@ -636,6 +636,9 @@ button { font: inherit; color: inherit; }
 .mini-bubble.staff { background: #e8edf2; }
 .mini-tag { margin-right: 6px; font-size: 11px; font-weight: 800; color: #4d5968; }
 .mini-narration { padding: 5px 10px; border-radius: 8px; background: rgb(90 70 50 / 7%); color: #62564a; font-size: 13px; line-height: 1.7; }
+/* 会う場面の地の文は、会話の画面と同じく横いっぱいの帯（1手ごとの解説と、手がかりの行） */
+.mini.face .mini-narration { align-self: stretch; }
+.cue-head .mini-narration { flex: 1; }
 .reply-to { font-size: 12px; color: var(--ink-2); }
 .ev { margin-top: 8px; text-align: right; font-size: 15px; font-weight: 800; }
 .tone-best { color: var(--best); }
