@@ -1057,7 +1057,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=f4017a74e5"
+const BUNDLE = "content/bundle.json?v=9670d83c98"
 
 return { BUNDLE }
 })()
@@ -1529,14 +1529,15 @@ function assembleFree({ free, types, names, spot, gender, pairing = 'any', tier 
     look: randomLook(gender, random, layer.looks?.[gender]), // 関係の層に looks があればその候補から（相手が親の年齢の見た目。07 §9.6）
   }
   // 相手の話し方は、その場所のもの（by_relation の scenes。07 §10.3）があれば、書いた項目（partner・after_miss・reactions）だけそこから。
-  // 会う場面は、タイプの face_scenes から
+  // 会う場面は、タイプの face_scenes に、その場所の by_relation の face_scenes（07 §14.5。上司・部下の敬語など）を同じように重ねる
   const placed = part.by_relation?.[key]?.scenes ?? {}
+  const placedFace = part.by_relation?.[key]?.face_scenes ?? {}
   // 流れは題材の kind と段階で決まる（相談なら 打ち明け→どうする→頼るかどうか→締め。07 §11.2。中級は会って相談の8手。§12.2。
   // 上級はメッセージ・会う・メッセージの10手。§13.2）。場面のならびは、初級はメッセージ1つ、中級は会う場面1つ、上級は parts
   const route = routeOf(scenes, topic.kind, tier)
   const sections = route.parts ?? [{ mode: meet ? 'face' : 'chat', flow: route.flow }]
   const modes = sections.flatMap((section) => section.flow.map(() => section.mode)) // 手ごとに、会う場面（face）かメッセージ（chat）か
-  const talkOf = (sceneId, face) => (face ? part.face_scenes[sceneId] : { ...part.scenes[sceneId], ...placed[sceneId] })
+  const talkOf = (sceneId, face) => (face ? { ...part.face_scenes[sceneId], ...placedFace[sceneId] } : { ...part.scenes[sceneId], ...placed[sceneId] })
   const steps = route.flow.map((sceneId, index) => {
     const face = modes[index] === 'face'
     return buildStep({ sceneId, index, scenes, talk: talkOf(sceneId, face), type, fill, random, face })
@@ -1631,8 +1632,8 @@ const TIER_IDS = ['beginner', 'intermediate', 'advanced']
 const NO_ART = { characters: {}, backgrounds: {} }
 const RETRY_MS = [600, 1800] // つながらないときは、間をあけて2回までやり直す
 const TIMEOUT_MS = 15000 // 1回で待つ長さ
-const BY_RELATION_FIELDS = ['history', 'scenes'] // 毎回初見のタイプの by_relation.<場所> に書けるもの（07 §8.4・§10.3）
-const TALK_FIELDS = ['partner', 'after_miss', 'reactions'] // by_relation の scenes.<場面> に書けるもの
+const BY_RELATION_FIELDS = ['history', 'scenes', 'face_scenes'] // 毎回初見のタイプの by_relation.<場所> に書けるもの（07 §8.4・§10.3・§14.5）
+const TALK_FIELDS = ['partner', 'after_miss', 'reactions'] // by_relation の scenes.<場面>・face_scenes.<場面> に書けるもの
 // 中級（会って話す。07 §12）: 店員さんの場面のおまけの「人として」（rules.json の manners のうち、会話が続くもの）と、
 // 紹介の文の会う店の名前・店員さんの場面の返事の注文の品（relations.json の meet.places の name・menu）
 const STAFF_MANNERS = ['light', 'heavy']
@@ -2287,7 +2288,8 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
     if (part.type !== type.id) problem(at, `type が「${part.type}」`)
     if (!part.history?.length) problem(at, 'history がない')
     for (const [i, history] of (part.history ?? []).entries()) if (!history.messages?.length) problem(`${at} history${i + 1}`, 'messages がない')
-    // 関係ごとの昨日のやりとり（07 §8.4）と、場面ごとの話し方（scenes。07 §10.3）。キーは relations.json の場所
+    // 関係ごとの昨日のやりとり（07 §8.4）と、場面ごとの話し方（メッセージの場面は scenes。07 §10.3。会う場面は face_scenes。§14.5）。
+    // キーは relations.json の場所。書いた項目だけ、ふだんの話し方と同じ決まりで見る
     for (const [key, extra] of Object.entries(part.by_relation ?? {})) {
       const here = `${at} by_relation.${key}`
       if (!spots[key]) problem(here, `${key} が relations.json にない`)
@@ -2295,15 +2297,17 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
       if (wrong.length) problem(here, `書けるのは ${BY_RELATION_FIELDS.join('・')} だけ（${wrong.join('・')} は書けない）`)
       if (!extra?.history?.length) problem(here, 'history がない')
       for (const [i, history] of (extra?.history ?? []).entries()) if (!history.messages?.length) problem(`${here} history${i + 1}`, 'messages がない')
-      for (const [sceneId, talk] of Object.entries(extra?.scenes ?? {})) {
-        const where = `${here} ${sceneId}`
-        if (!chatIds.includes(sceneId)) {
-          problem(where, 'scenes.json の流れ（flow・flows）にない場面')
-          continue
+      for (const [field, ids, face] of [['scenes', chatIds, false], ['face_scenes', faceIds, true]]) {
+        for (const [sceneId, talk] of Object.entries(extra?.[field] ?? {})) {
+          const where = `${here} ${sceneId}`
+          if (!ids.includes(sceneId)) {
+            problem(where, face ? '会う場面に出ない場面（face_scenes に書けるのは、流れで会う場面に出る場面だけ）' : 'scenes.json の流れ（flow・flows）にない場面')
+            continue
+          }
+          const fields = Object.keys(talk ?? {}).filter((item) => !TALK_FIELDS.includes(item))
+          if (fields.length) problem(where, `書けるのは ${TALK_FIELDS.join('・')} だけ（${fields.join('・')} は書けない）`)
+          checkTalk(talk ?? {}, sceneId, where, { optional: true, face })
         }
-        const fields = Object.keys(talk ?? {}).filter((field) => !TALK_FIELDS.includes(field))
-        if (fields.length) problem(where, `書けるのは ${TALK_FIELDS.join('・')} だけ（${fields.join('・')} は書けない）`)
-        checkTalk(talk ?? {}, sceneId, where, { optional: true })
       }
     }
     for (const sceneId of chatIds) {
@@ -2318,8 +2322,10 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
       else checkTalk(faceTalks[sceneId], sceneId, `${at} ${sceneId}`, { face: true })
     }
     // {…}: 場面の話し方（ふだんのもの・場所ごとのもの・会う場面のもの）は、その場面の流れの題材の言葉。昨日のやりとりは、どの kind にもある言葉だけ
-    const talkSets = [[at, part.scenes ?? {}], ...Object.entries(part.by_relation ?? {}).map(([key, extra]) => [`${at} by_relation.${key}`, extra?.scenes ?? {}])]
-    for (const [where, talks] of [...talkSets, [at, faceTalks]]) for (const sceneId of sceneIds) checkSlots(talks[sceneId], `${where} ${sceneId}`, allowedOf(sceneId))
+    const setsOf = (field, own) => [[at, own], ...Object.entries(part.by_relation ?? {}).map(([key, extra]) => [`${at} by_relation.${key}`, extra?.[field] ?? {}])]
+    const talkSets = setsOf('scenes', part.scenes ?? {})
+    const faceSets = setsOf('face_scenes', faceTalks)
+    for (const [where, talks] of [...talkSets, ...faceSets]) for (const sceneId of sceneIds) checkSlots(talks[sceneId], `${where} ${sceneId}`, allowedOf(sceneId))
     const histories = [part.history, ...Object.values(part.by_relation ?? {}).map((extra) => extra?.history)].flatMap((list) => list ?? [])
     checkSlots(histories, at, common)
     // 書き方の決まり（07 §6）: 「…」は察してほしい人の目印なので、言葉どおりの人のセリフ（ミスのあとも、関係ごとのものも含めた昨日のやりとりも）には使わない。
@@ -2335,12 +2341,16 @@ function validateFree(free, { rules, types, categories = null, backgrounds = BAC
       for (const [where, talks] of talkSets) {
         for (const line of chatIds.flatMap((id) => said(talks[id])).filter((text) => text?.includes('…'))) problem(where, `言葉どおりの人のセリフに「…」がある（${line}）`)
       }
-      for (const line of faceIds.flatMap((id) => faceSaid(faceTalks[id])).filter((text) => text.includes('…'))) problem(at, `言葉どおりの人のセリフに「…」がある（${line}）`)
+      for (const [where, talks] of faceSets) {
+        for (const line of faceIds.flatMap((id) => faceSaid(talks[id])).filter((text) => text.includes('…'))) problem(where, `言葉どおりの人のセリフに「…」がある（${line}）`)
+      }
     }
     for (const [where, talks] of talkSets) {
       for (const last of lasts) for (const line of said(talks[last]).filter((text) => /[？?]/.test(text))) problem(`${where} ${last}`, `締めの場面で質問している（${line}）`)
     }
-    for (const last of lasts) for (const line of [...faceSaid(faceTalks[last]), ...faceReacted(faceTalks[last])].filter((text) => /[？?]/.test(text))) problem(`${at} ${last}`, `締めの場面で質問している（${line}）`)
+    for (const [where, talks] of faceSets) {
+      for (const last of lasts) for (const line of [...faceSaid(talks[last]), ...faceReacted(talks[last])].filter((text) => /[？?]/.test(text))) problem(`${where} ${last}`, `締めの場面で質問している（${line}）`)
+    }
     // タイプの名前は、遊んでいる間に見える文に出さない
     const visible = JSON.stringify([part.history, part.by_relation, part.scenes, part.face_scenes])
     for (const other of types.types) if (visible.includes(other.name)) problem(at, `タイプの名前（${other.name}）が出ている`)
