@@ -567,11 +567,15 @@ function characterArt(character, face = 'normal', crop = 'bust') {
   return { svg: characterSvg(character, face, crop) }
 }
 
-/** 背景 → { image } か { back, front }（SVG） */
+/**
+ * 背景 → { image, front? } か { back, front }（SVG）。奥の層を画像に替えても、手前の層（テーブルなど。キャラの胸から下をかくす）は
+ * 今の SVG を重ねる（重ねないと、キャラが宙に浮いて見える）。front のない背景なら { image } だけ
+ */
 function backgroundArt(id) {
   const image = images.backgrounds[id]
-  if (image) return { image }
-  return backgroundSvg(id)
+  const drawn = backgroundSvg(id)
+  if (!image) return drawn
+  return drawn.front && BACKGROUNDS[id] ? { image, front: drawn.front } : { image }
 }
 
 return { FACE_IDS, BACKGROUND_IDS, lookProblems, setArtImages, characterArt, backgroundArt }
@@ -1063,7 +1067,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=bb1df14ba8"
+const BUNDLE = "content/bundle.json?v=e5a1f00b69"
 
 return { BUNDLE }
 })()
