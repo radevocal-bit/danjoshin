@@ -917,7 +917,7 @@ function omakaseCard({ categories, free, seriesRecordOf = () => NO_SERIES }) {
  * @param segment        選んでいる切りかえ（ない・知らない id なら、遊べるものがある最初の切りかえ。どれも空なら1つ目）
  * @param partnerGender  'any' | 'female' | 'male'（相手の性別の切りかえを出さない関係では使わない）
  * @param recordOf       (episodeId) => { plays, best }
- * @param seriesRecordOf (seriesOf の名前) => { plays, best, met, guessed, perfect }
+ * @param seriesRecordOf (seriesOf の名前) => { plays, best, met, … }（store.readSeries の形）
  * @param free           毎回初見の部品があれば { total: タイプの数, tiersOf?: (場所) => その場所で組み立てられる段階（なければ初級だけ） }
  * @param unlock         段階の鍵の区切り（unlockRank）。null なら段階の鍵はかけない
  * @returns { category, segments, segment, genderFilter（相手の性別の切りかえを出すか）, partnerGender, controls, cards, empty }
@@ -1033,6 +1033,14 @@ function entryCard(entry, { playerGender, recordOf, seriesRecordOf, byId, lockOf
   }
 }
 
+/**
+ * カードの記録の行（お話・毎回初見。08 §4.1・§4.2）: 最高点と、会ったタイプの数。
+ * 会話のあとのタイプ推理はやめたので、4軸ぜんぶ当てた回数は出さない（記録の guessed・perfect は、前の記録のまま残す）
+ */
+function recordLine({ best, met, total }) {
+  return `最高 ${best}点・会ったタイプ ${met}/${total}`
+}
+
 /** 毎回初見（07）のカード。tier: 段階（中級は会って話す。07 §12）/ lockText: 段階の鍵（08 §7） */
 function freeCard({ id, entry, pairing, total, record, tier = 'beginner', lockText = null }) {
   return {
@@ -1047,17 +1055,15 @@ function freeCard({ id, entry, pairing, total, record, tier = 'beginner', lockTe
     best: record.best,
     met: record.met?.length ?? 0,
     total,
-    guessed: record.guessed ?? 0,
-    perfect: record.perfect ?? 0,
   }
 }
 
-return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homeTiles, omakaseCard, categoryPage }
+return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homeTiles, omakaseCard, categoryPage, recordLine }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=1284eeaebd"
+const BUNDLE = "content/bundle.json?v=bb1df14ba8"
 
 return { BUNDLE }
 })()
@@ -2423,7 +2429,7 @@ const { rankFor } = __modules["js/rules.js"]
 const VARIANTS = { same: '同性', opposite: '異性', base: '元の手' }
 
 /**
- * guess: null（スキップ）/ { kind: 'type', answers: { A: 'near', … } } / { kind: 'gap', option: 'a' }
+ * guess: null（推理なし・スキップ）/ { kind: 'gap', option: 'a' }（続きの話のギャップ推理。会話のあとのタイプ推理はやめたので、その行は出さない）
  * story・free・tally: お話（06 §6.6）と毎回初見（07）のときだけ。相手は毎回ちがうので、そのタイプと名前を残す
  */
 function buildReport({ rules, types, episode, character, story = null, free = false, tally = null, play, saved, guess, playMs, playerGender }) {
@@ -2444,7 +2450,7 @@ function buildReport({ rules, types, episode, character, story = null, free = fa
     `初見スコア: ${first.score}（${rankFor(first.score, rules).label}） / 今回: ${now}`,
     `選んだ返事: ${picks}${ended}`,
     swapped ? `入れかわる手: ${swapped.step.id}手目＝${VARIANTS[swapped.variant]}` : null,
-    guessLine(episode, guess, types, character),
+    guessLine(episode, guess),
     `プレイ時間: ${formatDuration(playMs)}`,
   ].filter((line) => line != null).join('\n')
 }
@@ -2460,16 +2466,12 @@ function markOf(choice, rules) {
   return grade + manners
 }
 
-function guessLine(episode, guess, types, character) {
-  if (episode.guess === 'gap') {
-    if (!guess) return 'ギャップ推理: スキップ'
-    const correct = episode.gap_guess?.options.find((option) => option.correct)
-    return `ギャップ推理: ${guess.option === correct?.id ? '○' : '×'}（${guess.option}）`
-  }
-  if (!guess) return 'タイプ推理: スキップ'
-  const answer = types.types.find((type) => type.id === character.type)
-  const marks = Object.keys(types.axes).map((axis) => `${axis}${guess.answers[axis] === answer?.[axis] ? '○' : '×'}`)
-  return `タイプ推理: ${marks.join(' ')}`
+/** 推理の行は、続きの話のギャップ推理だけ（ほかの話には推理がないので、行を出さない） */
+function guessLine(episode, guess) {
+  if (episode.guess !== 'gap') return null
+  if (!guess) return 'ギャップ推理: スキップ'
+  const correct = episode.gap_guess?.options.find((option) => option.correct)
+  return `ギャップ推理: ${guess.option === correct?.id ? '○' : '×'}（${guess.option}）`
 }
 
 return { buildReport, formatDuration }
@@ -3070,7 +3072,7 @@ function createConversation({ episode, character }) {
       return view
     },
 
-    /** 会話が終わったあと、推理へのボタンを出して押されるまで待つ */
+    /** 会話が終わったあと、結果（ギャップ推理の話なら推理）へのボタンを出して押されるまで待つ */
     showEnd(label) {
       return current.showEnd(label)
     },
@@ -3081,66 +3083,22 @@ return { createConversation }
 })()
 // ---- js/screens/guess.js
 __modules["js/screens/guess.js"] = (() => {
-// S5 推理。タイプ推理（4つの軸を2択で。04 §4）か、続きの話のギャップ推理（4択。06 §4）
+// S5 推理。続きの話のギャップ推理（4択。06 §4）だけ。会話のあとのタイプ推理（4つの軸を2択で。04 §4）は、やめた（2026-11-14）
 
 const { shuffle } = __modules["js/rules.js"]
 const { h } = __modules["js/ui.js"]
 
-/** 答えは onDone({ kind: 'type', answers }) / onDone({ kind: 'gap', option }) / スキップは onDone(null) */
-function guessScreen({ episode, character, types, onDone }) {
-  return episode.guess === 'gap'
-    ? gapGuess({ question: episode.gap_guess.question, options: episode.gap_guess.options, onDone })
-    : typeGuess({ character, types, onDone })
+/**
+ * 会話が終わったあとの行き先（04 S4）。ギャップ推理の話（episode.guess === 'gap'）だけ推理の画面へ、ほかは推理を出さずに結果へ。
+ * → { guess: 'gap'（推理の画面を出す）| null（そのまま結果へ）, label: 会話の終わりのボタンの文字 }
+ */
+function afterConversation(episode) {
+  return episode.guess === 'gap' ? { guess: 'gap', label: 'ギャップ推理へ' } : { guess: null, label: '結果へ' }
 }
 
-function typeGuess({ character, types, onDone }) {
-  const keys = Object.keys(types.axes)
-  const answers = {}
-  const submit = h('button', {
-    class: 'btn btn-primary',
-    type: 'button',
-    disabled: true,
-    onClick: () => onDone({ kind: 'type', answers: { ...answers } }),
-  }, '答え合わせ')
-
-  // 1枚ごとに、質問（question）と、それに答える2択。答えの下に、その答えの相手の様子（signs）。04 S4
-  const cards = keys.map((key) => {
-    const axis = types.axes[key]
-    const question = axis.question ?? axis.label
-    const options = Object.entries(axis.values).map(([value, label]) => {
-      const sign = axis.signs?.[value]
-      // 読み上げでも、答えの言葉と様子の説明を両方読む
-      const button = h('button', { class: 'opt', type: 'button', 'aria-pressed': 'false', ...(sign ? { 'aria-label': `${label}。${sign}` } : {}) },
-        h('span', { class: 'opt-label', text: label }),
-        sign ? h('span', { class: 'opt-sign', text: sign }) : null,
-      )
-      button.addEventListener('click', () => {
-        answers[key] = value
-        for (const [other, otherButton] of options) otherButton.setAttribute('aria-pressed', String(other === value))
-        // 4問すべて選ぶまで押せない
-        submit.disabled = keys.some((k) => !answers[k])
-      })
-      return [value, button]
-    })
-    return h('div', { class: 'axis-card' },
-      h('p', { class: 'axis-head' },
-        h('span', { class: 'axis-key', text: key }),
-        h('span', { class: 'axis-label', text: question }),
-      ),
-      h('div', { class: 'opts', role: 'group', 'aria-label': question }, options.map(([, button]) => button)),
-    )
-  })
-
-  return h('section', { class: 'screen page guess' },
-    h('p', { class: 'kicker', text: 'タイプ推理' }),
-    h('h2', { class: 'guess-q', text: `${character.name}はどんなタイプだと思う？` }),
-    h('p', { class: 'guess-lead', text: `4つとも、${character.name}に近いほうを選ぼう` }),
-    cards,
-    h('div', { class: 'btn-row' },
-      submit,
-      h('button', { class: 'btn btn-ghost', type: 'button', onClick: () => onDone(null) }, 'スキップ'),
-    ),
-  )
+/** ギャップ推理の画面。答えは onDone({ kind: 'gap', option }) / スキップは onDone(null) */
+function guessScreen({ episode, onDone }) {
+  return gapGuess({ question: episode.gap_guess.question, options: episode.gap_guess.options, onDone })
 }
 
 function gapGuess({ question, options, onDone }) {
@@ -3175,13 +3133,13 @@ function gapGuess({ question, options, onDone }) {
   )
 }
 
-return { guessScreen }
+return { afterConversation, guessScreen }
 })()
 // ---- js/screens/home.js
 __modules["js/screens/home.js"] = (() => {
 // S2 ホーム「だれと話す？」と、関係のページ（08 §4。06 §4 S2 のタブを置きかえた）。★（心の余裕）はここでは出さない
 
-const { GENDERS, PAIRINGS, PARTNER_GENDERS, categoryPage, homeTiles, omakaseCard } = __modules["js/catalog.js"]
+const { GENDERS, PAIRINGS, PARTNER_GENDERS, categoryPage, homeTiles, omakaseCard, recordLine } = __modules["js/catalog.js"]
 const { art, characterAvatar, h, tierBadge } = __modules["js/ui.js"]
 
 // 関係のタイルの絵（決まった SVG。色はタイトルの絵と同じ2色）。知らない関係は吹き出し
@@ -3338,7 +3296,7 @@ const storyNode = (c, onOpen) => h('button', { ...lockable(c, 'story'), onClick:
     ),
     h('span', { class: 'ep-title', text: c.story.title }),
     lockOr(c, c.summary),
-    !c.locked && c.best != null ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}` }) : null,
+    !c.locked && c.best != null ? h('span', { class: 'ep-best', text: recordLine(c) }) : null,
   ),
 )
 
@@ -3353,9 +3311,7 @@ const freeNode = (c, onOpen) => h('button', { ...lockable(c, 'free'), onClick: (
     ),
     h('span', { class: 'ep-title', text: c.omakase ? '毎回初見（おまかせ）' : c.entry.tier ? `毎回初見（${c.tier}）` : '毎回初見' }),
     lockOr(c, 'だれが来るかは、開くまでわからない'),
-    !c.locked && c.best != null
-      ? h('span', { class: 'ep-best', text: `最高 ${c.best}点・会ったタイプ ${c.met}/${c.total}・4軸ぜんぶ当てた ${c.perfect}回` })
-      : null,
+    !c.locked && c.best != null ? h('span', { class: 'ep-best', text: recordLine(c) }) : null,
   ),
 )
 
@@ -3465,33 +3421,19 @@ function gapPart({ episode, character, type, axes }) {
   )
 }
 
-// 3. 推理の答え合わせ（スキップしたら出さない）
-function guessPart({ episode, type, axes }, guess) {
-  if (guess.kind === 'gap') {
-    const options = episode.gap_guess?.options ?? []
-    const chosen = options.find((option) => option.id === guess.option)
-    const correct = options.find((option) => option.correct)
-    const ok = chosen?.correct === true
-    return card('あなたの推理',
-      h('p', { class: `gap-answer ${ok ? 'ok' : 'ng'}` },
-        h('span', { class: 'guess-mark', 'aria-label': ok ? '正解' : '不正解', text: ok ? '○' : '×' }),
-        h('span', { text: chosen?.text ?? '' }),
-      ),
-      ok || !correct ? null : h('p', { class: 'note', text: `正解: ${correct.text}` }),
-    )
-  }
-  if (!type) return null
-  const hits = axes.filter(([key]) => guess.answers[key] === type[key]).length
+// 3. ギャップ推理の答え合わせ（続きの話だけ。スキップしたら出さない）。会話のあとのタイプ推理はやめた
+function guessPart({ episode }, guess) {
+  if (guess.kind !== 'gap') return null
+  const options = episode.gap_guess?.options ?? []
+  const chosen = options.find((option) => option.id === guess.option)
+  const correct = options.find((option) => option.correct)
+  const ok = chosen?.correct === true
   return card('あなたの推理',
-    h('ul', { class: 'guess-list' }, axes.map(([key, axis]) => {
-      const ok = guess.answers[key] === type[key]
-      return h('li', { class: `guess-row ${ok ? 'ok' : 'ng'}` },
-        h('span', { class: 'guess-axis', text: `${key} ${axis.label}` }),
-        h('span', { class: 'guess-you', text: axis.values[guess.answers[key]] }),
-        h('span', { class: 'guess-mark', 'aria-label': ok ? '正解' : '不正解', text: ok ? '○' : '×' }),
-      )
-    })),
-    h('p', { class: 'guess-sum', text: `${axes.length}つ中 ${hits}つ正解` }),
+    h('p', { class: `gap-answer ${ok ? 'ok' : 'ng'}` },
+      h('span', { class: 'guess-mark', 'aria-label': ok ? '正解' : '不正解', text: ok ? '○' : '×' }),
+      h('span', { text: chosen?.text ?? '' }),
+    ),
+    ok || !correct ? null : h('p', { class: 'note', text: `正解: ${correct.text}` }),
   )
 }
 
@@ -3672,7 +3614,7 @@ return { titleScreen, howToScreen, genderScreen, introScreen }
 __modules["js/main.js"] = (() => {
 // 男女心（仮）試作版 — 画面の流れ（04 §4・06 §4・08 §4）
 // S0 タイトル → S1 遊び方 → S1.5 あなたは？（初回だけ）→ S2 ホーム（だれと話す？）→ 関係のページ
-//   → S3 紹介 → S4 会話（場面ごと）→ S5 推理 → S6 結果
+//   → S3 紹介 → S4 会話（場面ごと）→ S5 推理（続きの話のギャップ推理だけ）→ S6 結果
 
 const { BACKGROUND_IDS, lookProblems, setArtImages } = __modules["js/art/index.js"]
 const { TIERS, pairingOf, resolveFree, seriesOf, spotLabel, unlockRank } = __modules["js/catalog.js"]
@@ -3685,7 +3627,7 @@ const { castStory } = __modules["js/stories.js"]
 const { copyText, h, toast } = __modules["js/ui.js"]
 const { setSpeed, skipWaits } = __modules["js/wait.js"]
 const { createConversation } = __modules["js/views/conversation.js"]
-const { guessScreen } = __modules["js/screens/guess.js"]
+const { afterConversation, guessScreen } = __modules["js/screens/guess.js"]
 const { categoryScreen, homeScreen } = __modules["js/screens/home.js"]
 const { resultScreen } = __modules["js/screens/result.js"]
 const { genderScreen, howToScreen, introScreen, titleScreen } = __modules["js/screens/start.js"]
@@ -3870,10 +3812,16 @@ async function startConversation(entry, source) {
   const { character, episode } = entry
   const cast = { type: character.type, name: character.name, ...(episode.free ? { topic: episode.free.topic } : {}) }
   session.saved = series ? store.recordSeriesPlay(series, session.play, cast) : store.recordPlay(episode.id, session.play)
-  await conversation.showEnd(entry.episode.guess === 'gap' ? 'ギャップ推理へ' : 'タイプ推理へ')
+  // 推理の画面は、続きの話のギャップ推理だけ。ほかは推理を出さずに結果へ（会話のあとのタイプ推理はやめた。04 S4）
+  const next = afterConversation(entry.episode)
+  await conversation.showEnd(next.label)
+  session.guess = null
+  if (!next.guess) {
+    showResult()
+    return
+  }
   show(guessScreen({
     ...entry,
-    types: game.types,
     onDone: (guess) => {
       session.guess = guess
       showResult()
@@ -3884,7 +3832,7 @@ async function startConversation(entry, source) {
 function showResult() {
   // プレイ時間は S3 の[会話をはじめる]から、結果が最初に出るまで
   session.playMs ??= Date.now() - session.startedAt
-  session.tally ??= tallyOf(session.entry, session.guess)
+  session.tally ??= tallyOf(session.entry)
   show(resultScreen({
     ...withLessons(session.entry, session.play),
     rules: game.rules,
@@ -3910,22 +3858,16 @@ function withLessons(entry, play) {
 
 /**
  * お話・毎回初見の腕前（結果とコピーに出す行）。会ったタイプは、種明かし（結果の画面）で数える。
- * 毎回初見は関係ごとの記録（08 §4.4）で、タイプ推理で4軸ぜんぶ当てた回数も数える（推理をスキップした回は数えない）
+ * 毎回初見は関係ごとの記録（08 §4.4）。会話のあとのタイプ推理はやめたので、4軸ぜんぶ当てた回数は出さない
+ * （前の記録の guessed・perfect は、そのまま残す）
  */
-function tallyOf(entry, guess) {
+function tallyOf(entry) {
   const series = seriesOf(entry)
   if (!series) return null
   const met = store.meetType(series, entry.character.type).length
   if (!entry.free) return [`このお話で会ったタイプ ${met}/${entry.story.variants.length}`]
-  const type = game.types.types.find((item) => item.id === entry.character.type)
-  const counts = guess?.kind === 'type'
-    ? store.countGuess(series, Object.keys(game.types.axes).every((axis) => guess.answers[axis] === type[axis]))
-    : store.readSeries(series)
   const tier = entry.episode.tier === 'beginner' ? '' : `・${TIERS[entry.episode.tier]}` // 記録は段階ごと（08 §7）
-  return [
-    `毎回初見（${spotLabel(game.categories, entry)}${tier}）で会ったタイプ ${met}/${Object.keys(game.free.types).length}`,
-    `4軸ぜんぶ当てた ${counts.perfect}回／${counts.guessed}回`,
-  ]
+  return [`毎回初見（${spotLabel(game.categories, entry)}${tier}）で会ったタイプ ${met}/${Object.keys(game.free.types).length}`]
 }
 
 async function copyReport() {

@@ -526,33 +526,12 @@ button { font: inherit; color: inherit; }
 /* ---------- S5 推理 ---------- */
 .guess-q { margin: 6px 0 18px; font-size: 21px; font-weight: 800; line-height: 1.45; }
 .guess-lead { margin: -8px 0 16px; font-size: 13px; color: var(--ink-2); }
-.axis-card { margin-bottom: 12px; padding: 14px 14px 16px; border-radius: 18px; background: var(--surface); }
-.axis-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
-.axis-key { font-weight: 800; color: var(--accent); }
-.axis-label { font-weight: 800; }
-.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.opt, .gap-opt {
+.gap-opt {
   border: 1.5px solid var(--line);
   background: var(--surface);
   cursor: pointer;
   touch-action: manipulation;
 }
-.opt {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  min-height: 48px;
-  padding: 8px;
-  border-radius: 12px;
-  font-size: 15px;
-  font-weight: 700;
-}
-/* 答えの下の、その答えの相手の様子。小さく薄めに（押したあとも読める濃さ） */
-.opt-sign { font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--ink-2); text-wrap: balance; word-break: auto-phrase; }
-.opt[aria-pressed="true"] { border-color: var(--accent-strong); background: var(--accent-strong); color: #fff; }
-.opt[aria-pressed="true"] .opt-sign { color: #fff; }
 .gap-opts { display: grid; gap: 8px; margin-bottom: 16px; }
 .gap-opt { padding: 12px 14px; border-radius: 14px; text-align: left; font-size: 15px; line-height: 1.6; }
 .gap-opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
@@ -594,23 +573,9 @@ button { font: inherit; color: inherit; }
 .gap-text { margin-top: 2px; font-weight: 800; line-height: 1.6; }
 .gap-flip, .gap-cue { margin-top: 4px; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
 
-.guess-list { display: grid; gap: 6px; padding: 0; list-style: none; }
-.guess-row {
-  display: grid;
-  grid-template-columns: 1fr auto 1.6em;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: var(--bg);
-  font-size: 14px;
-}
-.guess-axis { color: var(--ink-2); }
-.guess-you { font-weight: 700; }
 .guess-mark { text-align: center; font-size: 17px; font-weight: 800; }
 .ok .guess-mark { color: var(--best); }
 .ng .guess-mark { color: var(--bad); }
-.guess-sum { margin-top: 10px; text-align: right; font-size: 13px; color: var(--ink-2); }
 .gap-answer { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--bg); font-size: 14px; line-height: 1.6; }
 
 .scene-head { margin: 18px 0 8px; padding: 4px 10px; border-radius: 8px; background: var(--bg); font-size: 13px; font-weight: 800; color: var(--ink-2); }
