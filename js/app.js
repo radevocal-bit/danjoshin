@@ -1067,7 +1067,7 @@ return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=e5a1f00b69"
+const BUNDLE = "content/bundle.json?v=c61683fc38"
 
 return { BUNDLE }
 })()
