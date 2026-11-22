@@ -552,11 +552,55 @@ const { FACES, characterSvg, lookProblems } = __modules["js/art/character.js"]
 const FACE_IDS = Object.keys(FACES)
 const BACKGROUND_IDS = Object.keys(BACKGROUNDS)
 
-let images = { characters: {}, backgrounds: {} }
+let images = { characters: {}, backgrounds: {}, parts: {} }
 
-/** art.json: { characters: { キャラID: { 表情ID: 画像パス } }, backgrounds: { 背景ID: 画像パス } } */
+/**
+ * art.json: { characters: { キャラID: { 表情ID: 画像パス } }, backgrounds: { 背景ID: 画像パス },
+ *   parts: { キャラID: { 表情ID: { 部品名: [x, y, 幅, 高さ] } } } }
+ * parts は会う場面で動かす部品（blink: 目を閉じた絵・talk1／talk2: 口を開けた絵）。数はキャラの絵（横400×縦448）の中の位置。
+ * 部品の絵の道は決まった形 art/characters/<キャラID>/parts/<表情ID>_<部品名>.webp（art.json には書かない）
+ */
 function setArtImages(manifest) {
-  images = { characters: manifest?.characters ?? {}, backgrounds: manifest?.backgrounds ?? {} }
+  images = { characters: manifest?.characters ?? {}, backgrounds: manifest?.backgrounds ?? {}, parts: manifest?.parts ?? {} }
+}
+
+const PART_NAMES = ['blink', 'talk1', 'talk2']
+const ART_SIZE = [400, 448] // キャラの絵の大きさ（部品の位置の元）
+const percent = (value, size) => Math.round((value / size) * 10000) / 100
+
+/**
+ * その表情の動きの部品 → { blink?, talk1?, talk2? }（どれも { image, box: { left, top, width, height }（キャラの絵に対する %）} ）。
+ * 部品がなければ null
+ */
+function characterParts(character, face = 'normal') {
+  const boxes = images.parts[character.id]?.[face]
+  if (!boxes) return null
+  const parts = {}
+  for (const name of PART_NAMES) {
+    const box = boxes[name]
+    if (!box) continue
+    const [x, y, width, height] = box
+    parts[name] = {
+      image: `art/characters/${character.id}/parts/${face}_${name}.webp`,
+      box: { left: percent(x, ART_SIZE[0]), top: percent(y, ART_SIZE[1]), width: percent(width, ART_SIZE[0]), height: percent(height, ART_SIZE[1]) },
+    }
+  }
+  return Object.keys(parts).length ? parts : null
+}
+
+/**
+ * 人のカード（ホーム。08 §8）の顔の切り出し。normal の blink（目の位置）から、顔のまわりが正方形の枠に入るように
+ * → { width, left, top }（正方形の枠の中の img につける %。小数1桁）。部品がなければ null
+ */
+function faceCrop(character) {
+  const eyes = images.parts[character.id]?.normal?.blink
+  if (!eyes) return null
+  const [x, y, w, h] = eyes
+  const win = w * 1.9
+  const cx = x + w / 2
+  const cy = y + h / 2 + w * 0.18
+  const round = (value) => Math.round(value * 10) / 10
+  return { width: round((400 / win) * 100), left: round(-((cx / win) * 100 - 50)), top: round(-((cy / win) * 100 - 50)) }
 }
 
 /** キャラの絵 → { image } か { svg }。look も画像もなければ null（文字アイコンにする） */
@@ -578,7 +622,7 @@ function backgroundArt(id) {
   return drawn.front && BACKGROUNDS[id] ? { image, front: drawn.front } : { image }
 }
 
-return { FACE_IDS, BACKGROUND_IDS, lookProblems, setArtImages, characterArt, backgroundArt }
+return { FACE_IDS, BACKGROUND_IDS, lookProblems, setArtImages, characterParts, faceCrop, characterArt, backgroundArt }
 })()
 // ---- js/store.js
 __modules["js/store.js"] = (() => {
@@ -874,8 +918,11 @@ function freeGenderOf(category, playerGender, partnerGender) {
  * 毎回初見のカードを開くときに、関係・切りかえ・相手の性別と、話の pairing（関係の pairing。ほかは any。07 §8.5）を決める。
  * おまかせ（ホーム。08 §4.1）なら、部品がある所から1つを選ぶ。性別が決まっていなければ、男女をランダムに
  */
-function resolveFree(source, { categories, playerGender, random = Math.random }) {
-  const spot = source.omakase ? omakaseSpot(freeSpots(categories), random) : source
+function resolveFree(source, { categories, playerGender, random = Math.random, tiersOf = null }) {
+  // 腕だめし（08 §8）: おまかせでも、関係（category）と段階（tier）を選んでいれば、その中から
+  const candidates = freeSpots(categories).filter((spot) => (!source.category || spot.category === source.category)
+    && (!source.tier || !tiersOf || tiersOf(spot).includes(source.tier)))
+  const spot = source.omakase ? omakaseSpot(candidates, random) : source
   const category = categories.categories.find((item) => item.id === spot.category)
   const gender = (source.omakase ? freeGenderOf(category, playerGender, 'any') : source.gender) ?? (random() < 0.5 ? 'female' : 'male')
   return { category: spot.category, segment: spot.segment, gender, pairing: category?.pairing ?? 'any' }
@@ -889,6 +936,57 @@ function omakaseSpot(spots, random) {
 }
 
 const NO_SERIES = { plays: 0, best: null, met: [], guessed: 0, perfect: 0 }
+
+/**
+ * ホームの人の一覧（08 §8）。関係（categories.json の順）ごとに、固定の人の話がある人と、お話のカード。段階の鍵はかけない（続きの話の鍵は残す）
+ * → [{ category, label, people: [{ id, character, cards, tiers, title, more }], stories }]（people も stories もない関係は入れない）
+ */
+function homePeople({ categories, entries, playerGender, recordOf, seriesRecordOf = () => NO_SERIES }) {
+  const byId = new Map(entries.filter((entry) => entry.episode).map((entry) => [entry.episode.id, entry]))
+  const cardOf = (entry) => entryCard(entry, { playerGender, recordOf, seriesRecordOf, byId, lockOf: () => null })
+  return categories.categories.map((category) => {
+    const shown = entries.filter((entry) => tagsOf(entry).category === category.id && shownTo(entry, playerGender))
+    const people = []
+    for (const entry of shown.filter((item) => item.episode)) {
+      let person = people.find((item) => item.id === entry.character.id)
+      if (!person) people.push((person = { id: entry.character.id, character: entry.character, cards: [] }))
+      person.cards.push(cardOf(entry))
+    }
+    for (const person of people) {
+      const tiers = new Set(person.cards.map((card) => tagsOf(card.entry).tier ?? 'beginner'))
+      Object.assign(person, { tiers: Object.keys(TIERS).filter((tier) => tiers.has(tier)).map((tier) => TIERS[tier]), title: person.cards[0].episode.title, more: person.cards.length - 1 })
+    }
+    return { category, label: category.label, people, stories: shown.filter((entry) => entry.story).map(cardOf) }
+  }).filter((group) => group.people.length || group.stories.length)
+}
+
+/** ホームの関係の見出しの横の数（08 §8）: 「8人」「3人＋お話1」 */
+function groupCount({ people, stories }) {
+  return `${people.length}人${stories.length ? `＋お話${stories.length}` : ''}`
+}
+
+/** 人のカードの題（08 §8）: 最初の話の題。話が2つ以上なら「「金曜の夜」ほか1話」 */
+function personTitle({ title, more }) {
+  return `「${title}」${more ? `ほか${more}話` : ''}`
+}
+
+/**
+ * 腕だめし（毎回初見。08 §8）の選び方。free: { total, tiersOf }（null なら null）
+ * → { relations: [{ id, label }]（先頭はおまかせ）, tiers: [{ id, label, enabled }], category, tier, total, record }。選べないものは、おまかせ・初級にもどす
+ * record: 選んだ関係（おまかせなら全部）・段階の記録を合わせたもの（その段階を組み立てられる場所だけ。会ったタイプは重ねない）
+ */
+function freePicker({ categories, free, category = 'omakase', tier = 'beginner', seriesRecordOf = () => NO_SERIES }) {
+  if (!free) return null
+  const spots = freeSpots(categories)
+  const ids = new Set(spots.map((spot) => spot.category))
+  const relations = [{ id: 'omakase', label: 'おまかせ' }, ...categories.categories.filter((item) => ids.has(item.id)).map((item) => ({ id: item.id, label: item.label }))]
+  const chosen = relations.some((item) => item.id === category) ? category : 'omakase'
+  const here = spots.filter((spot) => chosen === 'omakase' || spot.category === chosen)
+  const tiers = Object.entries(TIERS).map(([id, label]) => ({ id, label, enabled: here.some((spot) => (free.tiersOf?.(spot) ?? ['beginner']).includes(id)) }))
+  const picked = tiers.some((item) => item.id === tier && item.enabled) ? tier : 'beginner'
+  const record = combineSeries(here.filter((spot) => (free.tiersOf?.(spot) ?? ['beginner']).includes(picked)).map((spot) => seriesRecordOf(seriesOf({ free: true, ...spot, tier: picked }))))
+  return { relations, tiers, category: chosen, tier: picked, total: free.total, record }
+}
 
 /**
  * ホームの関係のタイル（08 §4.1）。categories.json の順
@@ -1062,12 +1160,12 @@ function freeCard({ id, entry, pairing, total, record, tier = 'beginner', lockTe
   }
 }
 
-return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homeTiles, omakaseCard, categoryPage, recordLine }
+return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homePeople, groupCount, personTitle, freePicker, homeTiles, omakaseCard, categoryPage, recordLine }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=c61683fc38"
+const BUNDLE = "content/bundle.json?v=1566448105"
 
 return { BUNDLE }
 })()
@@ -2918,12 +3016,43 @@ function renderChoice(choice) {
 
 return { createChatView }
 })()
+// ---- js/art/motion.js
+__modules["js/art/motion.js"] = (() => {
+// 会う場面のキャラの動きの時間（06 §5.3）。画面（DOM）を使わないので、試験で確かめられる。
+// 数は設計窓の試しのページ（.tmp/drafts/2026-11-21_art/motion_misaki/）で決めたもの
+
+/** 目を閉じている時間 ms */
+const BLINK_MS = 120
+
+/** 次のまばたきまでの間 ms（random は 0〜1）。3〜5秒 */
+function blinkGap(random) {
+  return 3000 + random * 2000
+}
+
+/** セリフの字数から、口を動かす時間 ms（0.6〜2.6秒） */
+function talkMs(length) {
+  return Math.min(2600, Math.max(600, 300 + length * 90))
+}
+
+/** 口の形を切り替える間 ms */
+const TALK_STEP_MS = 110
+
+/** その間の口の形（random は 0〜1）: null（閉じ）・'talk1'（少し開く）・'talk2'（大きく開く） */
+function talkFrame(random) {
+  if (random < 0.35) return null
+  return random < 0.7 ? 'talk1' : 'talk2'
+}
+
+return { BLINK_MS, blinkGap, talkMs, TALK_STEP_MS, talkFrame }
+})()
 // ---- js/views/face.js
 __modules["js/views/face.js"] = (() => {
 // 会う場面（06 §4 S4・§5）。上半分に背景とキャラの絵、下半分に吹き出しと選択肢。
 // セリフの face でキャラの表情を切り替える。地の文は帯で出し、店員さんは札つきの吹き出しにする。
+// キャラは呼吸・ゆれ（CSS）、まばたき・しゃべる口（表情の絵に小さな部品を重ねる。06 §5.3）で動く。
 
-const { backgroundArt, characterArt } = __modules["js/art/index.js"]
+const { FACE_IDS, backgroundArt, characterArt, characterParts } = __modules["js/art/index.js"]
+const { BLINK_MS, TALK_STEP_MS, blinkGap, talkFrame, talkMs } = __modules["js/art/motion.js"]
 const { art, artNode, characterAvatar, h, speakerName } = __modules["js/ui.js"]
 const { between, wait } = __modules["js/wait.js"]
 const { createPanel } = __modules["js/views/panel.js"]
@@ -2934,7 +3063,9 @@ const GAP_MS = [700, 2600]
 
 function createFaceView({ character, scene }) {
   const background = backgroundArt(scene.background)
-  const figure = h('div', { class: 'stage-figure' })
+  // 動きは中の入れ物に（.stage-figure は transform で真ん中に置いている）: ゆれ ＞ 呼吸 ＞ 表情の絵と部品
+  const body = h('div', { class: 'stage-body' })
+  const figure = h('div', { class: 'stage-figure' }, h('div', { class: 'stage-sway' }, body))
   const stage = h('div', { class: 'stage' },
     background.image
       ? artNode(background, 'stage-layer')
@@ -2954,13 +3085,69 @@ function createFaceView({ character, scene }) {
   let lastLength = 0
   const readingGap = () => Math.min(GAP_MS[1], Math.max(GAP_MS[0], 300 + lastLength * MS_PER_CHAR))
 
-  /** 表情を切り替える（絵は キャラID＋表情ID で呼ぶ） */
+  // 部品の絵は、そのキャラの分を先に読んでおく（1人約15KB）
+  for (const id of FACE_IDS) for (const part of Object.values(characterParts(character, id) ?? {})) new Image().src = part.image
+
+  let parts = {} // 今の表情の部品 { blink?, talk1?, talk2? } の img
+  let talkTimer = null
+  const show = (img, on) => img?.classList.toggle('on', on)
+
+  function stopTalk() {
+    clearInterval(talkTimer)
+    talkTimer = null
+    show(parts.talk1, false)
+    show(parts.talk2, false)
+  }
+
+  /** 相手のセリフの間、口を動かす（字数で長さを決め、最後は閉じる） */
+  function talk(length) {
+    stopTalk()
+    if (!parts.talk1 && !parts.talk2) return
+    const end = Date.now() + talkMs(length)
+    talkTimer = setInterval(() => {
+      const frame = Date.now() < end ? talkFrame(Math.random()) : null
+      show(parts.talk1, frame === 'talk1')
+      show(parts.talk2, frame === 'talk2')
+      if (!frame && Date.now() >= end) stopTalk()
+    }, TALK_STEP_MS)
+  }
+
+  // まばたき: 数秒ごとに、今の表情に blink があれば少しだけ見せる。場面が画面から外れたら止める
+  let attached = false
+  const blinkLoop = () => setTimeout(() => {
+    if (el.isConnected) attached = true
+    else if (attached) return
+    if (parts.blink && el.isConnected) {
+      const blink = parts.blink
+      show(blink, true)
+      setTimeout(() => show(blink, false), BLINK_MS)
+    }
+    blinkLoop()
+  }, blinkGap(Math.random()))
+
+  /** 表情を切り替える（絵は キャラID＋表情ID で呼ぶ）。新しい絵を上に重ねて、ふわっと浮かび上がらせる */
   function setFace(next) {
     if (!next || next === face) return
+    const first = face == null
     face = next
-    figure.replaceChildren(artNode(characterArt(character, next), 'stage-art') ?? characterAvatar(character, 'xl'))
+    stopTalk()
+    parts = {}
+    const layer = h('div', { class: `stage-face${first ? '' : ' entering'}` },
+      artNode(characterArt(character, next), 'stage-art') ?? characterAvatar(character, 'xl'),
+      Object.entries(characterParts(character, next) ?? {}).map(([name, { image, box }]) => {
+        parts[name] = h('img', { class: 'stage-part', src: image, alt: '', decoding: 'async' })
+        Object.assign(parts[name].style, { left: `${box.left}%`, top: `${box.top}%`, width: `${box.width}%`, height: `${box.height}%` })
+        return parts[name]
+      }),
+    )
+    const old = [...body.children]
+    body.append(layer)
+    if (first) return
+    requestAnimationFrame(() => requestAnimationFrame(() => layer.classList.remove('entering')))
+    setTimeout(() => { for (const item of old) item.remove() }, 260) // 浮かび上がり（0.22秒）が終わったら、古い絵を消す
   }
   setFace('normal')
+  blinkLoop()
 
   function lineNode(who, text) {
     if (who === 'narration') return h('p', { class: 'narration', text })
@@ -2976,6 +3163,8 @@ function createFaceView({ character, scene }) {
     const who = line.who ?? character.id
     if (line.face) setFace(line.face) // 地の文でも、face があれば表情だけ変える
     log.append(lineNode(who, line.text))
+    if (who === character.id) talk(line.text.length) // 地の文・店員さんのセリフでは、口は動かさない
+    else stopTalk()
     lastWho = who === 'narration' ? null : who
     lastLength = line.text.length
     scrollDown()
@@ -3141,9 +3330,10 @@ return { afterConversation, guessScreen }
 })()
 // ---- js/screens/home.js
 __modules["js/screens/home.js"] = (() => {
-// S2 ホーム「だれと話す？」と、関係のページ（08 §4。06 §4 S2 のタブを置きかえた）。★（心の余裕）はここでは出さない
+// S2 ホーム「だれと話す？」（08 §8。人の顔を関係ごとに並べる）・人の話の一覧と、関係のページ（08 §4。ホームからは行かなくなった）。★（心の余裕）はここでは出さない
 
-const { GENDERS, PAIRINGS, PARTNER_GENDERS, categoryPage, homeTiles, omakaseCard, recordLine } = __modules["js/catalog.js"]
+const { GENDERS, PAIRINGS, PARTNER_GENDERS, TIERS, categoryPage, freePicker, groupCount, homePeople, personTitle, recordLine } = __modules["js/catalog.js"]
+const { characterArt, faceCrop } = __modules["js/art/index.js"]
 const { art, characterAvatar, h, tierBadge } = __modules["js/ui.js"]
 
 // 関係のタイルの絵（決まった SVG。色はタイトルの絵と同じ2色）。知らない関係は吹き出し
@@ -3177,23 +3367,10 @@ const EMPTY = {
   filter: 'この組み合わせの話は準備中です',
 }
 
-/** S2 ホーム: 上に「毎回初見（おまかせ）」、その下に「だれと話す？」と関係のタイル（2列） */
-function homeScreen({ categories, entries, playerGender, seriesRecordOf, free, onOpen, onCategory, onChangeGender }) {
-  const omakase = omakaseCard({ categories, free, seriesRecordOf })
-  const tiles = homeTiles({ categories, entries, playerGender, free: Boolean(free) })
-
-  const tileNode = (tile) => h('button', {
-    class: `tile${tile.empty ? ' empty' : ''}`,
-    type: 'button',
-    onClick: () => onCategory(tile.id),
-  },
-    categoryIcon(tile.id, 'tile-icon'),
-    h('span', { class: 'tile-text' },
-      h('span', { class: 'tile-label', text: tile.label }),
-      tile.sub ? h('span', { class: 'tile-sub', text: tile.sub }) : null,
-      h('span', { class: 'tile-meta', text: tileMeta(tile) }),
-    ),
-  )
+/** S2 ホーム（08 §8）: 「だれと話す？」の下に、人の顔を関係ごとに3列で。お話はその関係の下に横いっぱい。いちばん下に腕だめし（毎回初見） */
+function homeScreen({ categories, entries, playerGender, recordOf, seriesRecordOf, free, trial = {}, onOpen, onPerson, onTrial, onTrialStart, onChangeGender }) {
+  const picker = freePicker({ categories, free, category: trial.category, tier: trial.tier, seriesRecordOf })
+  const groups = homePeople({ categories, entries, playerGender, recordOf, seriesRecordOf })
 
   return h('section', { class: 'screen home' },
     h('header', { class: 'home-head' },
@@ -3203,18 +3380,80 @@ function homeScreen({ categories, entries, playerGender, seriesRecordOf, free, o
         h('span', { class: 'home-change', text: '変える' }),
       ),
     ),
-    omakase ? h('div', { class: 'home-list home-omakase' }, freeNode(omakase, onOpen)) : null,
     h('h2', { class: 'home-heading', text: 'だれと話す？' }),
-    h('div', { class: 'tiles' }, tiles.map(tileNode)),
+    h('p', { class: 'fine home-lead', text: '話したい人を選んでね。相手のタイプはひみつ。' }),
+    groups.map((group) => [
+      h('div', { class: 'home-sec' }, h('h3', { text: group.label }), h('span', { text: groupCount(group) })),
+      h('div', { class: 'people' },
+        group.people.map((person) => personNode(person, onPerson)),
+        group.stories.map((c) => storyNode(c, onOpen)),
+      ),
+    ]),
+    picker ? trialNode(picker, onTrial, onTrialStart) : null,
     h('p', { class: 'fine home-foot', text: '記録はこの端末のブラウザの中にだけ残ります。' }),
   )
 }
 
-/** タイルの下の行: 「8話＋毎回初見」「3話」「準備中」 */
-function tileMeta(tile) {
-  if (tile.empty) return '準備中'
-  if (!tile.count) return '毎回初見'
-  return `${tile.count}話${tile.free ? '＋毎回初見' : ''}`
+/** 腕だめし（毎回初見。08 §8）: 関係とむずかしさのチップ・記録の行・はじめる。組み立てられない段階は押せない */
+function trialNode(picker, onTrial, onTrialStart) {
+  const chips = (items, chosen, pick) => h('div', { class: 'chips', role: 'group' }, items.map((item) => h('button', {
+    class: 'chip-btn',
+    type: 'button',
+    'aria-pressed': String(item.id === chosen),
+    disabled: item.enabled === false,
+    onClick: () => pick(item.id),
+  }, item.label)))
+  return h('div', { class: 'trial' },
+    h('div', { class: 'trial-head' },
+      characterAvatar({ id: 'free', name: '？', icon_text: '?' }, 'md'),
+      h('div', {},
+        h('p', { class: 'trial-title', text: '腕だめし（毎回初見）' }),
+        h('p', { class: 'trial-sub', text: `${picker.total}タイプのだれかが来る。会話も毎回ちがう` }),
+      ),
+    ),
+    h('p', { class: 'trial-label', text: '関係' }),
+    chips(picker.relations, picker.category, (category) => onTrial({ category })),
+    h('p', { class: 'trial-label', text: 'むずかしさ' }),
+    chips(picker.tiers, picker.tier, (tier) => onTrial({ tier })),
+    picker.record.best != null ? h('p', { class: 'ep-best trial-record', text: recordLine({ ...picker.record, met: picker.record.met.length, total: picker.total }) }) : null,
+    h('button', { class: 'btn btn-primary trial-start', type: 'button', onClick: () => onTrialStart(picker) }, 'はじめる'),
+  )
+}
+
+const TIER_IDS = Object.fromEntries(Object.entries(TIERS).map(([id, label]) => [label, id]))
+
+/** 人の顔（正方形の枠）。会う場面の絵の顔のまわりを切り出す（faceCrop）。部品がなければアイコンを枠いっぱいに */
+function personFace(character) {
+  const crop = faceCrop(character)
+  const picture = characterArt(character, 'normal')
+  if (!crop || !picture?.image) return h('span', { class: 'person-face' }, characterAvatar(character))
+  const img = h('img', { src: picture.image, alt: '', decoding: 'async', loading: 'lazy' })
+  Object.assign(img.style, { width: `${crop.width}%`, left: `${crop.left}%`, top: `${crop.top}%` })
+  return h('span', { class: 'person-face' }, img)
+}
+
+/** 人のカード（08 §8）: 顔・名前・題（「…」ほかN話）・段階の札 */
+const personNode = (person, onPerson) => h('button', { class: 'person', type: 'button', onClick: () => onPerson(person) },
+  personFace(person.character),
+  h('span', { class: 'person-body' },
+    h('span', { class: 'person-name', text: person.character.name }),
+    h('span', { class: 'person-title', text: personTitle(person) }),
+    h('span', { class: 'person-tiers' }, person.tiers.map((label) => tierBadge(TIER_IDS[label], label))),
+  ),
+)
+
+/** その人の話の一覧（08 §8）: 話が2つ以上の人を押したとき */
+function personScreen({ person, onBack, onOpen }) {
+  return h('section', { class: 'screen home person-page' },
+    h('header', { class: 'home-head' },
+      h('button', { class: 'home-you back', type: 'button', onClick: onBack }, '‹ もどる'),
+    ),
+    h('div', { class: 'category-title' },
+      h('span', { class: 'person-head' }, personFace(person.character)),
+      h('h1', { class: 'category-name', text: person.character.name }),
+    ),
+    h('div', { class: 'home-list' }, person.cards.map((c) => cardNode(c, onOpen))),
+  )
 }
 
 /** 関係のページ: 切りかえ・相手の性別・その関係の毎回初見・話の一覧 */
@@ -3319,7 +3558,7 @@ const freeNode = (c, onOpen) => h('button', { ...lockable(c, 'free'), onClick: (
   ),
 )
 
-return { homeScreen, categoryScreen }
+return { homeScreen, personScreen, categoryScreen }
 })()
 // ---- js/screens/result.js
 __modules["js/screens/result.js"] = (() => {
@@ -3621,7 +3860,7 @@ __modules["js/main.js"] = (() => {
 //   → S3 紹介 → S4 会話（場面ごと）→ S5 推理（続きの話のギャップ推理だけ）→ S6 結果
 
 const { BACKGROUND_IDS, lookProblems, setArtImages } = __modules["js/art/index.js"]
-const { TIERS, pairingOf, resolveFree, seriesOf, spotLabel, unlockRank } = __modules["js/catalog.js"]
+const { TIERS, homePeople, pairingOf, resolveFree, seriesOf, spotLabel, unlockRank } = __modules["js/catalog.js"]
 const { loadGame, validateCategories, validateEpisode, validateFree, validateStory } = __modules["js/data.js"]
 const { assembleFree, freeLessons, freeTiers } = __modules["js/free.js"]
 const { buildReport } = __modules["js/report.js"]
@@ -3632,7 +3871,7 @@ const { copyText, h, toast } = __modules["js/ui.js"]
 const { setSpeed, skipWaits } = __modules["js/wait.js"]
 const { createConversation } = __modules["js/views/conversation.js"]
 const { afterConversation, guessScreen } = __modules["js/screens/guess.js"]
-const { categoryScreen, homeScreen } = __modules["js/screens/home.js"]
+const { categoryScreen, homeScreen, personScreen } = __modules["js/screens/home.js"]
 const { resultScreen } = __modules["js/screens/result.js"]
 const { genderScreen, howToScreen, introScreen, titleScreen } = __modules["js/screens/start.js"]
 
@@ -3726,8 +3965,8 @@ const records = {
   seriesRecordOf: (series) => store.readSeries(series),
 }
 
-/** S2 ホーム「だれと話す？」（08 §4.1） */
-function showHome() {
+/** S2 ホーム「だれと話す？」（08 §8）。人を押すと、話が1つで鍵がなければその話の紹介へ、ほかはその人の話の一覧へ */
+function showHome({ guard = true } = {}) {
   place = null
   show(homeScreen({
     categories: game.categories,
@@ -3736,9 +3975,32 @@ function showHome() {
     ...records,
     free: freeInfo(),
     onOpen: openEntry,
-    onCategory: showCategory,
+    onPerson: (person) => (person.cards.length === 1 && !person.cards[0].locked ? openEntry(person.cards[0].entry) : showPerson(person.id)),
+    // 腕だめし（毎回初見）: 選んだ関係と段階は、この端末に覚えておく。チップを押したらホームを描き直す
+    trial: store.page('free'),
+    onTrial: (patch) => {
+      store.savePage('free', patch)
+      const y = window.scrollY
+      showHome({ guard: false })
+      window.scrollTo(0, y)
+    },
+    onTrialStart: ({ category, tier }) => openEntry({
+      free: true,
+      omakase: true,
+      ...(category === 'omakase' ? {} : { category }),
+      ...(tier === 'beginner' ? {} : { tier }),
+    }),
     onChangeGender: showGender,
-  }))
+  }), { guard })
+}
+
+/** その人の話の一覧（08 §8）。記録（続きの話の鍵）は開くたびに読み直す */
+function showPerson(id) {
+  const person = homePeople({ categories: game.categories, entries: game.entries, playerGender: playerGender(), ...records })
+    .flatMap((group) => group.people).find((item) => item.id === id)
+  if (!person) return showHome()
+  place = `person:${id}`
+  show(personScreen({ person, onBack: showHome, onOpen: openEntry }))
 }
 
 /** 関係のページ（08 §4.2）。選んだ切りかえと相手の性別は、この端末に覚えておく */
@@ -3767,9 +4029,11 @@ function showCategory(id, { guard = true } = {}) {
   }), { guard })
 }
 
-/** 紹介・結果からもどる（来た関係のページか、ホーム） */
-const showPlace = () => (place ? showCategory(place) : showHome())
+/** 紹介・結果からもどる（来た所: その人の話の一覧・関係のページか、ホーム） */
+const personOf = () => (place?.startsWith('person:') ? game.entries.find((entry) => entry.character?.id === place.slice('person:'.length))?.character : null)
+const showPlace = () => (personOf() ? showPerson(personOf().id) : place ? showCategory(place) : showHome())
 const placeLabel = () => {
+  if (personOf()) return `${personOf().name}の話にもどる`
   const category = place && game.categories.categories.find((item) => item.id === place)
   return category ? `${category.label}の一覧にもどる` : 'ホームにもどる'
 }
@@ -3777,10 +4041,11 @@ const placeLabel = () => {
 /**
  * 選んだ話を開く。お話（06 §6.6）なら、ここで相手（タイプ・名前・見た目）が決まる。
  * 毎回初見（07）なら、関係（おまかせのとき）と相手の性別を決めて、その関係の層を重ねて相手も会話もここで組み立てる（07 §8）。
- * 中級のカード（tier）なら会う場面で（07 §12）。おまかせは初級だけ
+ * 段階（tier）があれば、その段階で（中級は会う場面。07 §12）。腕だめし（08 §8）は、選んだ関係（なければおまかせ）と段階で組み立てる
  */
 function openEntry(source) {
-  const target = source.free ? { ...source, ...resolveFree(source, { categories: game.categories, playerGender: playerGender() }) } : source
+  const options = { categories: game.categories, playerGender: playerGender(), tiersOf: (spot) => freeTiers(game.free, spot) }
+  const target = source.free ? { ...source, ...resolveFree(source, options) } : source
   const series = seriesOf(target)
   const last = series ? store.readSeries(series).last : null
   const entry = target.free
