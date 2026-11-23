@@ -294,7 +294,7 @@ button { font: inherit; color: inherit; }
 .person-tiers .badge { padding: 1px 5px; font-size: 9.5px; }
 .person-head { width: 56px; flex: none; overflow: hidden; border-radius: 50%; }
 /* 腕だめし（毎回初見。08 §8）: いちばん下の1枚。関係とむずかしさのチップ */
-.trial { margin: 26px 12px 0; padding: 14px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.trial { margin: 14px 12px 22px; padding: 14px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .trial-head { display: flex; align-items: center; gap: 10px; }
 .trial-head .avatar { background: var(--accent-soft); color: var(--accent); font-weight: 800; }
 .trial-title { font-size: 16px; font-weight: 800; }
@@ -315,6 +315,7 @@ button { font: inherit; color: inherit; }
 }
 .chip-btn[aria-pressed="true"] { background: var(--ink); box-shadow: none; color: #fff; }
 .chip-btn:disabled { opacity: .4; cursor: not-allowed; }
+.trial-note { margin: 6px 2px 0; font-size: 11px; color: var(--muted); }
 .trial-record { display: block; margin-top: 12px; }
 .trial-start { width: 100%; margin-top: 14px; }
 .tile {

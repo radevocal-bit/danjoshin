@@ -833,6 +833,8 @@ __modules["js/catalog.js"] = (() => {
 const { combineSeries } = __modules["js/store.js"]
 
 const TIERS = { beginner: '初級', intermediate: '中級', advanced: '上級' }
+/** 腕だめしの「むずかしさ」の下の一言（08 §9） */
+const TIER_NOTES = { beginner: 'メッセージのやり取りだけ', intermediate: '会って話す（絵あり）', advanced: '会って話す（絵あり）' }
 const GENDERS = { male: '男性', female: '女性', none: '答えない' }
 const PAIRINGS = { same: '同性', opposite: '異性' }
 /** 関係のページの「相手の性別」の切りかえ（08 §4.2）。最初は「どちらも」 */
@@ -975,7 +977,7 @@ function personTitle({ title, more }) {
  * → { relations: [{ id, label }]（先頭はおまかせ）, tiers: [{ id, label, enabled }], category, tier, total, record }。選べないものは、おまかせ・初級にもどす
  * record: 選んだ関係（おまかせなら全部）・段階の記録を合わせたもの（その段階を組み立てられる場所だけ。会ったタイプは重ねない）
  */
-function freePicker({ categories, free, category = 'omakase', tier = 'beginner', seriesRecordOf = () => NO_SERIES }) {
+function freePicker({ categories, free, category = 'omakase', tier, seriesRecordOf = () => NO_SERIES }) {
   if (!free) return null
   const spots = freeSpots(categories)
   const ids = new Set(spots.map((spot) => spot.category))
@@ -983,7 +985,9 @@ function freePicker({ categories, free, category = 'omakase', tier = 'beginner',
   const chosen = relations.some((item) => item.id === category) ? category : 'omakase'
   const here = spots.filter((spot) => chosen === 'omakase' || spot.category === chosen)
   const tiers = Object.entries(TIERS).map(([id, label]) => ({ id, label, enabled: here.some((spot) => (free.tiersOf?.(spot) ?? ['beginner']).includes(id)) }))
-  const picked = tiers.some((item) => item.id === tier && item.enabled) ? tier : 'beginner'
+  // 最初（段階を渡されない時）は中級（08 §9）。渡された段階・中級を組み立てられなければ初級
+  const enabled = (id) => tiers.some((item) => item.id === id && item.enabled)
+  const picked = enabled(tier ?? 'intermediate') ? (tier ?? 'intermediate') : 'beginner'
   const record = combineSeries(here.filter((spot) => (free.tiersOf?.(spot) ?? ['beginner']).includes(picked)).map((spot) => seriesRecordOf(seriesOf({ free: true, ...spot, tier: picked }))))
   return { relations, tiers, category: chosen, tier: picked, total: free.total, record }
 }
@@ -1160,7 +1164,7 @@ function freeCard({ id, entry, pairing, total, record, tier = 'beginner', lockTe
   }
 }
 
-return { TIERS, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homePeople, groupCount, personTitle, freePicker, homeTiles, omakaseCard, categoryPage, recordLine }
+return { TIERS, TIER_NOTES, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homePeople, groupCount, personTitle, freePicker, homeTiles, omakaseCard, categoryPage, recordLine }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
@@ -3398,7 +3402,7 @@ return { afterConversation, guessScreen }
 __modules["js/screens/home.js"] = (() => {
 // S2 ホーム「だれと話す？」（08 §8。人の顔を関係ごとに並べる）・人の話の一覧と、関係のページ（08 §4。ホームからは行かなくなった）。★（心の余裕）はここでは出さない
 
-const { GENDERS, PAIRINGS, PARTNER_GENDERS, TIERS, categoryPage, freePicker, groupCount, homePeople, personTitle, recordLine } = __modules["js/catalog.js"]
+const { GENDERS, PAIRINGS, PARTNER_GENDERS, TIERS, TIER_NOTES, categoryPage, freePicker, groupCount, homePeople, personTitle, recordLine } = __modules["js/catalog.js"]
 const { characterArt, faceCrop } = __modules["js/art/index.js"]
 const { art, characterAvatar, h, tierBadge } = __modules["js/ui.js"]
 
@@ -3433,7 +3437,7 @@ const EMPTY = {
   filter: 'この組み合わせの話は準備中です',
 }
 
-/** S2 ホーム（08 §8）: 「だれと話す？」の下に、人の顔を関係ごとに3列で。お話はその関係の下に横いっぱい。いちばん下に腕だめし（毎回初見） */
+/** S2 ホーム（08 §8）: 「だれと話す？」の下に、人の顔を関係ごとに3列で。お話はその関係の下に横いっぱい。腕だめし（毎回初見）は頭のすぐ下（08 §9） */
 function homeScreen({ categories, entries, playerGender, recordOf, seriesRecordOf, free, trial = {}, onOpen, onPerson, onTrial, onTrialStart, onChangeGender }) {
   const picker = freePicker({ categories, free, category: trial.category, tier: trial.tier, seriesRecordOf })
   const groups = homePeople({ categories, entries, playerGender, recordOf, seriesRecordOf })
@@ -3446,8 +3450,9 @@ function homeScreen({ categories, entries, playerGender, recordOf, seriesRecordO
         h('span', { class: 'home-change', text: '変える' }),
       ),
     ),
+    picker ? trialNode(picker, onTrial, onTrialStart) : null,
     h('h2', { class: 'home-heading', text: 'だれと話す？' }),
-    h('p', { class: 'fine home-lead', text: '話したい人を選んでね。相手のタイプはひみつ。' }),
+    h('p', { class: 'fine home-lead', text: '話したい人を選んでね。相手のタイプはひみつ。初級はメッセージのやり取りだけ。中級・上級は会って話す。' }),
     groups.map((group) => [
       h('div', { class: 'home-sec' }, h('h3', { text: group.label }), h('span', { text: groupCount(group) })),
       h('div', { class: 'people' },
@@ -3455,7 +3460,6 @@ function homeScreen({ categories, entries, playerGender, recordOf, seriesRecordO
         group.stories.map((c) => storyNode(c, onOpen)),
       ),
     ]),
-    picker ? trialNode(picker, onTrial, onTrialStart) : null,
     h('p', { class: 'fine home-foot', text: '記録はこの端末のブラウザの中にだけ残ります。' }),
   )
 }
@@ -3481,6 +3485,7 @@ function trialNode(picker, onTrial, onTrialStart) {
     chips(picker.relations, picker.category, (category) => onTrial({ category })),
     h('p', { class: 'trial-label', text: 'むずかしさ' }),
     chips(picker.tiers, picker.tier, (tier) => onTrial({ tier })),
+    h('p', { class: 'fine trial-note', text: TIER_NOTES[picker.tier] }),
     picker.record.best != null ? h('p', { class: 'ep-best trial-record', text: recordLine({ ...picker.record, met: picker.record.met.length, total: picker.total }) }) : null,
     h('button', { class: 'btn btn-primary trial-start', type: 'button', onClick: () => onTrialStart(picker) }, 'はじめる'),
   )
