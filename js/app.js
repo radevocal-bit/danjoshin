@@ -2803,6 +2803,7 @@ __modules["js/wait.js"] = (() => {
 // 演出の待ち時間。画面をタップすると、いま待っている分を飛ばせる（仕様書 §7）
 
 let speed = 1
+let held = false // ログを開いている間は、押しても進まない
 const pending = new Set()
 
 /** 待ち時間の倍率（?fast=1 の確認用に小さくする） */
@@ -2823,18 +2824,36 @@ function wait(ms) {
   })
 }
 
+/** 押して進むのを止める（true）・もどす（false）。止めている間は skipWaits() が何もしない */
+function holdTaps(on) {
+  held = on
+}
+
 /** いま待っている分を飛ばす。飛ばした数を返す */
 function skipWaits() {
+  if (held) return 0
   const count = pending.size
   for (const done of [...pending]) done()
   return count
+}
+
+/** 画面を押す（skipWaits() が呼ばれる）まで待つ。速くしている時（?fast=1）は押さなくても少しで進む */
+function waitTap() {
+  if (speed < 1) return wait(600)
+  return new Promise((resolve) => {
+    const done = () => {
+      pending.delete(done)
+      resolve()
+    }
+    pending.add(done)
+  })
 }
 
 function between(min, max) {
   return min + Math.random() * (max - min)
 }
 
-return { setSpeed, wait, skipWaits, between }
+return { setSpeed, wait, holdTaps, skipWaits, waitTap, between }
 })()
 // ---- js/views/panel.js
 __modules["js/views/panel.js"] = (() => {
@@ -3045,21 +3064,45 @@ function talkFrame(random) {
 
 return { BLINK_MS, blinkGap, talkMs, TALK_STEP_MS, talkFrame }
 })()
+// ---- js/say.js
+__modules["js/say.js"] = (() => {
+// 会う場面の下の枠（06 §4 S4.1）: いちばん新しい1つだけを出す。その枠の形と札を決める（DOM は使わない）
+
+/**
+ * line（{ who?, text, to? }）を枠の形にする → { kind, tag, text }
+ * kind: 'person'（相手）| 'staff'（店員さん）| 'narration'（地の文・札なし）| 'player'（こちらの返事）
+ */
+function sayBox(line, character) {
+  const who = line.who ?? character.id
+  const name = (id) => (id === character.id ? character.name : id === 'staff' ? '店員さん' : id)
+  if (who === 'player') {
+    const to = line.to && line.to !== character.id ? ` → ${name(line.to)}に` : ''
+    return { kind: 'player', tag: `あなた${to}`, text: line.text }
+  }
+  if (who === 'narration') return { kind: 'narration', tag: null, text: line.text }
+  return { kind: who === 'staff' ? 'staff' : 'person', tag: name(who), text: line.text }
+}
+
+/** 選択肢の上に残す直前の1行: 「イツキ「…」」の形。地の文なら文だけ */
+function quoteLine(box) {
+  if (box.kind === 'narration') return box.text
+  return `${box.kind === 'player' ? 'あなた' : box.tag}「${box.text}」`
+}
+
+return { sayBox, quoteLine }
+})()
 // ---- js/views/face.js
 __modules["js/views/face.js"] = (() => {
-// 会う場面（06 §4 S4・§5）。上半分に背景とキャラの絵、下半分に吹き出しと選択肢。
-// セリフの face でキャラの表情を切り替える。地の文は帯で出し、店員さんは札つきの吹き出しにする。
+// 会う場面（06 §4 S4・S4.1・§5）。背景とキャラの絵を画面いっぱいに出し、文は下の枠に1つずつ（押して進む）。
+// セリフの face でキャラの表情を切り替える。地の文は暗い帯、店員さん・こちらの返事は札の色を変える。
 // キャラは呼吸・ゆれ（CSS）、まばたき・しゃべる口（表情の絵に小さな部品を重ねる。06 §5.3）で動く。
 
 const { FACE_IDS, backgroundArt, characterArt, characterParts } = __modules["js/art/index.js"]
 const { BLINK_MS, TALK_STEP_MS, blinkGap, talkFrame, talkMs } = __modules["js/art/motion.js"]
 const { art, artNode, characterAvatar, h, speakerName } = __modules["js/ui.js"]
-const { between, wait } = __modules["js/wait.js"]
+const { quoteLine, sayBox } = __modules["js/say.js"]
+const { holdTaps, waitTap } = __modules["js/wait.js"]
 const { createPanel } = __modules["js/views/panel.js"]
-
-const LONG_MS = 2800 // delay: "long" … 黙っている間
-const MS_PER_CHAR = 40 // 前のセリフを読む時間の目安
-const GAP_MS = [700, 2600]
 
 function createFaceView({ character, scene }) {
   const background = backgroundArt(scene.background)
@@ -3073,17 +3116,32 @@ function createFaceView({ character, scene }) {
     figure,
     background.front ? h('div', { class: 'stage-layer front' }, art(background.front)) : null,
   )
-  const log = h('div', { class: 'say-log', role: 'log', 'aria-live': 'polite' })
+  // 今までの吹き出しの並びは、ログの画面（ふだんは隠す）にためておく
+  const log = h('div', { class: 'say-log', role: 'log' })
+  const logView = h('div', { class: 'say-logview', hidden: true },
+    h('div', { class: 'say-logview-head' }, h('button', { class: 'say-logview-close', type: 'button', onClick: () => openLog(false) }, '閉じる')),
+    log,
+  )
+  const logButton = h('button', { class: 'say-log-btn', type: 'button', onClick: () => openLog(true) }, 'ログ')
+  const slot = h('div', { class: 'say-slot', 'aria-live': 'polite' }) // 下の枠: いちばん新しい1つ・選択肢・終わり
   const panel = createPanel()
-  const el = h('section', { class: 'view face' }, stage, log, panel.el)
+  const el = h('section', { class: 'view face' }, stage, logButton, slot, logView)
+  holdTaps(false)
+
+  /** ログを開く（いちばん下まで送る）・閉じる。開いている間は、押しても話は進まない */
+  function openLog(on) {
+    logView.hidden = !on
+    holdTaps(on)
+    if (on) log.scrollTop = log.scrollHeight
+  }
 
   const scrollDown = () => requestAnimationFrame(() => log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' }))
   new ResizeObserver(scrollDown).observe(log)
 
   let face = null
   let lastWho = null // 同じ人が続くときは名前を省く
-  let lastLength = 0
-  const readingGap = () => Math.min(GAP_MS[1], Math.max(GAP_MS[0], 300 + lastLength * MS_PER_CHAR))
+  let last = null // 下の枠に出している1つ（選択肢の上に残す）
+  let started = false // 場面の最初の1つは、押すのを待たずに出す
 
   // 部品の絵は、そのキャラの分を先に読んでおく（1人約15KB）
   for (const id of FACE_IDS) for (const part of Object.values(characterParts(character, id) ?? {})) new Image().src = part.image
@@ -3158,34 +3216,41 @@ function createFaceView({ character, scene }) {
     )
   }
 
-  async function say(line, gap = readingGap()) {
-    await wait(gap)
+  function showBox(box) {
+    last = box
+    slot.replaceChildren(h('div', { class: `say-box ${box.kind}` },
+      box.tag ? h('span', { class: 'say-tag', text: box.tag }) : null,
+      h('p', { class: 'say-text', text: box.text }),
+      h('span', { class: 'say-next', 'aria-hidden': 'true', text: '▼' }),
+    ))
+  }
+
+  async function say(line) {
+    if (started) await waitTap()
+    started = true
     const who = line.who ?? character.id
     if (line.face) setFace(line.face) // 地の文でも、face があれば表情だけ変える
     log.append(lineNode(who, line.text))
     if (who === character.id) talk(line.text.length) // 地の文・店員さんのセリフでは、口は動かさない
     else stopTalk()
     lastWho = who === 'narration' ? null : who
-    lastLength = line.text.length
+    showBox(sayBox(line, character))
     scrollDown()
   }
-
-  const reaction = (line) => say(line, line.delay === 'long' ? LONG_MS : between(700, 1100))
-
-  panel.hint()
 
   return {
     el,
     partner: (line) => say(line), // 会う場面のセリフは { who, text, face }
-    async choose(choices) {
+    choose(choices) {
+      // 押すのを待たずに、直前の1行と選択肢を下の枠の場所に出す
+      slot.replaceChildren(last ? h('p', { class: 'say-quote', text: quoteLine(last) }) : null, panel.el)
+      el.classList.add('choosing') // 選択肢の間は、キャラを少し上げて顔を隠さない
       // 相手以外（店員さんなど）への返事がある手だけ、誰への返事かの札を出す
       const tagged = choices.some((choice) => choice.to && choice.to !== character.id)
-      const choice = await panel.choose(choices, (c) => [
+      return panel.choose(choices, (c) => [
         tagged && c.to ? h('span', { class: 'choice-to', text: `${speakerName(c.to, character)}に` }) : null,
         c.text,
       ])
-      panel.hint()
-      return choice
     },
     async player(choice) {
       const to = choice.to && choice.to !== character.id ? `→ ${speakerName(choice.to, character)}に` : null
@@ -3194,17 +3259,18 @@ function createFaceView({ character, scene }) {
         h('div', { class: 'bubble', text: choice.text }),
       ))
       lastWho = 'player'
-      lastLength = 0
+      el.classList.remove('choosing')
+      showBox(sayBox({ who: 'player', text: choice.text, to: choice.to }, character))
       scrollDown()
-      await wait(400)
     },
-    reaction,
-    noReply: () => wait(1200),
-    exit: reaction,
+    reaction: (line) => say(line), // 黙っている間（delay: "long"）も、押して進む
+    noReply: async () => {}, // 次の相手のセリフが、押すのを待つ
+    exit: (line) => say(line),
     async showEnd(label) {
-      await wait(800)
+      await waitTap()
       log.append(h('p', { class: 'say-end', text: '会話が終わりました' }))
       scrollDown()
+      slot.replaceChildren(h('p', { class: 'say-quote say-end-note', text: '会話が終わりました' }), panel.el)
       await panel.button(label)
     },
   }
