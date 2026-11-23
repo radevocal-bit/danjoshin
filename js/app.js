@@ -3180,7 +3180,7 @@ __modules["js/views/face.js"] = (() => {
 const { FACE_IDS, backgroundArt, characterArt, characterParts } = __modules["js/art/index.js"]
 const { BLINK_MS, TALK_STEP_MS, blinkGap, talkFrame, talkMs } = __modules["js/art/motion.js"]
 const { art, artNode, characterAvatar, h, speakerName } = __modules["js/ui.js"]
-const { autoMs, quoteLine, sayBox } = __modules["js/say.js"]
+const { autoMs, sayBox } = __modules["js/say.js"]
 const { buzz, holdTaps, skipWaits, wait, waitTap } = __modules["js/wait.js"]
 const { createPanel } = __modules["js/views/panel.js"]
 
@@ -3417,7 +3417,12 @@ function createFaceView({ character, scene, prefs = { auto: false, hinted: true,
     partner: (line) => say(line), // 会う場面のセリフは { who, text, face }
     choose(choices) {
       // 押すのを待たずに、直前の1行と選択肢を下の枠の場所に出す
-      slot.replaceChildren(last ? h('p', { class: 'say-quote', text: quoteLine(last) }) : null, panel.el)
+      // 直前の一言は、相手なら白い枠・札・左、こちらなら紺・右。その下に「あなたの返事」の札と、紺の選択肢（09 §9）
+      slot.replaceChildren(
+        last ? h('div', { class: `say-prev is-${last.kind}` }, last.tag ? h('span', { class: 'say-tag', text: last.tag }) : null, h('p', { text: last.text })) : null,
+        h('span', { class: 'say-yours', text: 'あなたの返事' }),
+        panel.el,
+      )
       el.classList.add('choosing') // 選択肢の間は、キャラを少し上げて顔を隠さない
       // 相手以外（店員さんなど）への返事がある手だけ、誰への返事かの札を出す
       const tagged = choices.some((choice) => choice.to && choice.to !== character.id)

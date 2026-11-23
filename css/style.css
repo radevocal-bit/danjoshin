@@ -501,7 +501,7 @@ button.person:active { transform: scale(.98); }
   transform: translateX(-50%);
   transition: transform .3s ease;
 }
-.view.face.choosing .stage-figure { transform: translate(-50%, -12%); }
+.view.face.choosing .stage-figure { transform: translate(-50%, -20%); }
 .stage-figure svg, .stage-figure img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
 /* キャラの動き（06 §5.3）: ゆれ ＞ 呼吸 ＞ 表情の絵（切り替えはふわっと）と、まばたき・口の部品 */
 .stage-sway, .stage-body, .stage-face { position: absolute; inset: 0; transform-origin: 50% 100%; }
@@ -579,8 +579,19 @@ button.person:active { transform: scale(.98); }
 .say-end-note { text-align: center; }
 .view.face .panel { max-height: none; padding: 0; border: 0; background: none; overflow: visible; }
 .view.face .panel-label { display: none; }
-.view.face .choice { padding: 9px 14px; border: 2px solid #fff; border-radius: 12px; background: #fff; font-size: 14px; line-height: 1.5; box-shadow: 0 2px 8px rgb(0 0 0 / 15%); }
-.view.face .choice:active, .view.face .choice.picked { border-color: var(--accent); background: var(--accent-soft); }
+/* 返事を選ぶ画面（09 §9。見本 choices.html の右）: 直前の一言は白・札・左、あなたの返事は紺・右 */
+.say-prev { position: relative; margin-right: 40px; padding: 16px 14px 10px; border-radius: 14px; background: rgb(255 255 255 / 95%); color: #2b2b2b; font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.say-prev .say-tag { top: -11px; left: 12px; padding: 2px 10px; font-size: 11px; }
+.say-prev.is-staff .say-tag { background: #6b7a8f; }
+.say-prev.is-narration { padding-top: 10px; }
+.say-prev.is-player { margin-right: 0; margin-left: 40px; background: #3a4060; color: #fff; }
+.say-prev.is-player .say-tag { background: #3a4060; box-shadow: 0 0 0 1.5px #fff; }
+.say-yours { justify-self: end; margin-bottom: -4px; padding: 2px 10px; border-radius: 999px; background: #3a4060; color: #fff; font-size: 11px; font-weight: 700; }
+.view.face .choice { position: relative; width: auto; margin-left: 40px; padding: 11px 14px 11px 34px; border: 2px solid #5b6390; border-radius: 14px; background: #3a4060; color: #fff; font-size: 14px; line-height: 1.5; box-shadow: 0 2px 8px rgb(0 0 0 / 25%); }
+.view.face .choice::before { content: '▶'; position: absolute; top: 50%; left: 13px; color: #aab0d6; font-size: 10px; transform: translateY(-50%); }
+@media (hover: hover) { .view.face .choice:hover { border-color: #8f97c8; } }
+.view.face .choice:active, .view.face .choice.picked { border-color: #c3c8ec; background: #4d5684; }
+.view.face .choice-to { background: rgb(255 255 255 / 18%); color: #e6e8f6; }
 .say { display: flex; flex-direction: column; align-items: flex-start; margin-top: 10px; animation: rise .2s ease-out; }
 .say-name { margin: 0 0 4px 6px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
 .say .bubble { position: relative; max-width: 88%; background: var(--surface); }
