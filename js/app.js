@@ -153,6 +153,34 @@ const BACKGROUNDS = {
       '<ellipse cx="312" cy="230" rx="14" ry="3" fill="#C9D9C4"/>' +
       '<path d="M312 222c-3-4 3-7 0-11" fill="none" stroke="#EFE6DA" stroke-width="3" stroke-linecap="round"/>',
   },
+
+  // 夜のシオリの部屋（09 §10）: 落ち着いた色の壁、夜の窓とカーテン、小さなキッチン、床のあかり、低いテーブルの手前
+  shiori_room: {
+    back:
+      '<rect width="400" height="300" fill="#D8CCD0"/>' +
+      '<rect width="400" height="12" fill="#C4B4BA"/>' +
+      '<rect x="24" y="36" width="112" height="104" rx="3" fill="#2B3352"/>' +
+      '<path d="M40 64h3v3h-3zM96 52h3v3h-3zM70 90h3v3h-3zM112 78h3v3h-3z" fill="#E9E3C4"/>' +
+      '<circle cx="104" cy="60" r="9" fill="#EDE6C8"/>' +
+      '<path d="M80 36V140" stroke="#ECE4E4" stroke-width="4"/>' +
+      '<path d="M14 30C26 70 20 110 30 150H8V30ZM146 30C134 70 140 110 130 150H152V30Z" fill="#A88A9A"/>' +
+      '<rect x="8" y="26" width="144" height="6" rx="3" fill="#8F7383"/>' +
+      '<rect x="262" y="92" width="122" height="78" fill="#E9E1DC"/>' +
+      '<rect x="262" y="88" width="122" height="6" rx="2" fill="#B9A9AE"/>' +
+      '<path d="M268 52H378V80H268Z" fill="#CFC2C6"/>' +
+      '<path d="M323 52V80M276 66h6M366 66h6" stroke="#B3A3A9" stroke-width="2"/>' +
+      '<path d="M300 104h20M350 104h14" stroke="#9E8E95" stroke-width="3" stroke-linecap="round"/>' +
+      '<path d="M200 0V18" stroke="#8F7F86" stroke-width="2"/>' +
+      '<path d="M186 32L192 18H208L214 32Z" fill="#E8C98A"/>' +
+      '<rect y="170" width="400" height="6" fill="#B9A49A"/>' +
+      '<rect y="176" width="400" height="124" fill="#C8B4A6"/>' +
+      '<ellipse cx="200" cy="226" rx="150" ry="34" fill="#D6C3B4"/>',
+    front:
+      '<rect y="252" width="400" height="8" fill="#A88E7C"/>' +
+      '<rect y="258" width="400" height="42" fill="#BEA28E"/>' +
+      '<rect x="292" y="232" width="26" height="28" rx="4" fill="#E9DED6" stroke="#CDBEB3" stroke-width="2"/>' +
+      '<path d="M318 240c8 0 8 12 0 12" fill="none" stroke="#CDBEB3" stroke-width="3"/>',
+  },
 }
 
 const svg = (body) =>
@@ -1202,7 +1230,7 @@ return { TIERS, TIER_NOTES, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, gende
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=105bdd36d6"
+const BUNDLE = "content/bundle.json?v=1f47c076a3"
 
 return { BUNDLE }
 })()
@@ -1966,6 +1994,7 @@ function validateEpisode({ episode, character }, { rules, types, backgrounds = n
       for (const line of choice.reaction ?? []) checkLine(line, `${here} reaction`, mode)
       if (choice.bad_end && !episode.bad_ends?.[choice.bad_end]) problem(here, `bad_end「${choice.bad_end}」が bad_ends にない`)
       if (choice.last_chance && !episode.last_chances?.[choice.last_chance]) problem(here, `last_chance「${choice.last_chance}」が last_chances にない`)
+      if (choice.last_chance && mode !== 'face') problem(here, 'last_chance は会う場面の手だけ（09 §10）')
       for (const axis of Object.keys(choice.leans ?? {})) {
         if (!types.axes[axis]) problem(here, `leans の軸 ${axis} が types.json にない`)
       }
