@@ -545,18 +545,23 @@ button.person:active { transform: scale(.98); }
   font-weight: 700;
 }
 .say-box.is-staff .say-tag { background: #6b7a8f; }
-.say-box.is-player .say-tag { background: #3a4060; }
+.say-box.is-player { margin-left: 48px; background: #3a4060; color: #fff; } /* こちらの返事は紺の地・右寄せ（09 §9） */
+.say-box.is-player .say-tag { background: #3a4060; box-shadow: 0 0 0 1.5px #fff; }
+.say-box.is-player .say-next { color: rgb(255 255 255 / 60%); }
+.say.player .bubble { background: #3a4060; color: #fff; }
+/* どこを押しても次へ（iPhone の Safari でも押せるように）と、最初の一度だけの注 */
+.conversation, .view.face { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.say-hint { position: absolute; right: 0; bottom: calc(110px + env(safe-area-inset-bottom)); left: 0; z-index: 6; margin: 0 auto; width: max-content; padding: 4px 12px; border-radius: 999px; background: rgb(0 0 0 / 55%); color: #fff; font-size: 12px; pointer-events: none; animation: fade .3s ease-out, fade .6s ease-in 2.6s reverse forwards; }
 .say-text { font-size: 15px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .say-box.is-narration .say-text { font-size: 14px; line-height: 1.6; }
 .say-next { position: absolute; right: 12px; bottom: 6px; font-size: 11px; color: #999; animation: blink-next 1.2s ease-in-out infinite; }
 .say-box.is-narration .say-next { color: #bbb; }
 @keyframes blink-next { 50% { opacity: .3; } }
 .say-quote { padding: 8px 14px; border-radius: 14px; background: rgb(255 255 255 / 93%); color: #555; font-size: 13px; line-height: 1.5; }
-.say-log-btn {
-  position: absolute;
-  top: calc(12px + env(safe-area-inset-top));
-  right: 12px;
-  z-index: 6;
+/* 右上の「オート」「ログ」（09 §9） */
+.say-tools { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px; z-index: 6; display: flex; gap: 6px; }
+.say-auto-btn[aria-pressed="true"] { background: #3a4060; color: #fff; }
+.say-log-btn, .say-auto-btn {
   padding: 4px 12px;
   border: 0;
   border-radius: 999px;
@@ -566,7 +571,7 @@ button.person:active { transform: scale(.98); }
   font-size: 12px;
   cursor: pointer;
 }
-.say-logview { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column; background: var(--say-bg); animation: fade .18s ease-out; }
+.say-logview { position: absolute; inset: 0; z-index: 10; cursor: auto; display: flex; flex-direction: column; background: var(--say-bg); animation: fade .18s ease-out; }
 .say-logview[hidden] { display: none; }
 .say-logview-head { display: flex; flex: none; justify-content: flex-end; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); border-bottom: 1px solid var(--line); }
 .say-logview-close { padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font: inherit; font-size: 13px; cursor: pointer; }

@@ -1202,7 +1202,7 @@ return { TIERS, TIER_NOTES, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, gende
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=b43c3ad6e7"
+const BUNDLE = "content/bundle.json?v=105bdd36d6"
 
 return { BUNDLE }
 })()
@@ -1965,6 +1965,7 @@ function validateEpisode({ episode, character }, { rules, types, backgrounds = n
       }
       for (const line of choice.reaction ?? []) checkLine(line, `${here} reaction`, mode)
       if (choice.bad_end && !episode.bad_ends?.[choice.bad_end]) problem(here, `bad_end「${choice.bad_end}」が bad_ends にない`)
+      if (choice.last_chance && !episode.last_chances?.[choice.last_chance]) problem(here, `last_chance「${choice.last_chance}」が last_chances にない`)
       for (const axis of Object.keys(choice.leans ?? {})) {
         if (!types.axes[axis]) problem(here, `leans の軸 ${axis} が types.json にない`)
       }
@@ -2016,6 +2017,10 @@ function validateEpisode({ episode, character }, { rules, types, backgrounds = n
       if (step.mode && step.mode !== mode) problem(where, `mode（${step.mode}）が場面の mode（${mode}）と違う`)
       if (step.topic && !switchTopics.includes(step.topic)) problem(where, `topic「${step.topic}」がキャラの switches にない`)
       checkStep(step, where, mode)
+      // 最後のチャンスの手（09 §6.1）も、1手として点検する
+      for (const id of new Set((step.choices ?? []).map((choice) => choice.last_chance).filter((id) => episode.last_chances?.[id]))) {
+        checkStep(episode.last_chances[id], ` 最後のチャンス ${id}`, mode)
+      }
       if (step.by_pairing) {
         pairingSteps += 1
         checkPairing(step, where, mode)
@@ -2642,6 +2647,7 @@ const { applyDeduction, deductionFor, endReasonFor, isMiss, openingFor, scenesOf
  *   partner(line, step) / choose(choices, step) → 選んだ choice / player(choice, step)
  *   reaction(line, step) / noReply(step) / exit(line)
  * 危ない相手（09 §6）: 返事の bad_end か、0点で終わる時の bad_end_on_zero で、その BAD END の行を出して終わる（exit は出さない）
+ * 返事に last_chance があれば、その reaction のあと last_chances[id] を1手としてはさむ（09 §6.1。手の id は「<元の手>+」）
  * pairing: プレイヤーと相手が 'same' / 'opposite'。答えないなら null（入れかわる手は元の手のまま）
  * 返すもの: { episodeId, score, endReason, badEnd（BAD END の id か null）,
  *            scenes: [{ scene, rough }],
@@ -2669,29 +2675,38 @@ async function runEpisode({ episode, character, rules, director, pairing = null,
     // （区切りは場面の rough_min_misses、なければ rules の rough_scene_min_misses）。そうなったら、結果に「はじめの様子が変わっていた」を出す
     const roughFirst = previousSceneMisses != null && previousSceneMisses >= (scene.rough_min_misses ?? rules.rough_scene_min_misses ?? 1)
     let misses = 0
-    for (const [n, original] of scene.steps.entries()) {
-      // 同性・異性で1手だけ入れかわる（06 §6.5）
-      const { step, variant } = stepFor(original, pairing)
-      const first = n === 0 && Boolean(scene.rough_first_step)
-      const { afterMiss, lines, cues } = stepContent(step, previous, rules, first ? roughFirst : undefined)
-      if (first && afterMiss) entry.rough = true
+    /** 1手: セリフ → 選ぶ → 返事 → 反応。終わるかどうか（endReason・badEnd）を決める */
+    const turn = async (step, lines, record) => {
       for (const line of lines) await view.partner(line, step)
-
       // データでは最適解が先頭に多いので、表示順は毎回シャッフル
       const choice = await view.choose(shuffle(step.choices, random), step)
       await view.player(choice, step)
 
       const points = deductionFor(choice, stars, rules)
       score = applyDeduction(score, points)
-      steps.push({ step, variant, scene, afterMiss, lines, cues, choice, points, score })
+      steps.push({ step, scene, ...record, choice, points, score })
       if (isMiss(choice, rules)) misses += 1
 
       const reaction = choice.reaction ?? []
       if (reaction.length === 0) await view.noReply(step)
       for (const line of reaction) await view.reaction(line, step)
 
-      endReason = choice.bad_end ? 'bad_end' : endReasonFor(choice, score, stars, rules)
+      // 最後のチャンスのある地雷には、地雷で会話を終える決まりを当てない（点数は引く）
+      endReason = choice.bad_end ? 'bad_end' : choice.last_chance ? (score <= 0 ? 'zero' : null) : endReasonFor(choice, score, stars, rules)
       badEnd = choice.bad_end ?? (endReason === 'zero' ? episode.bad_end_on_zero ?? null : null)
+      return choice
+    }
+    for (const [n, original] of scene.steps.entries()) {
+      // 同性・異性で1手だけ入れかわる（06 §6.5）
+      const { step, variant } = stepFor(original, pairing)
+      const first = n === 0 && Boolean(scene.rough_first_step)
+      const { afterMiss, lines, cues } = stepContent(step, previous, rules, first ? roughFirst : undefined)
+      if (first && afterMiss) entry.rough = true
+      let choice = await turn(step, lines, { variant, afterMiss, lines, cues })
+      if (!endReason && choice.last_chance) {
+        const chance = { ...episode.last_chances[choice.last_chance], id: `${step.id}+` }
+        choice = await turn(chance, chance.partner, { variant: null, afterMiss: false, lines: chance.partner, cues: chance.cues ?? [], lastChance: true })
+      }
       if (endReason) break
       previous = choice
     }
@@ -3143,13 +3158,18 @@ function sayBox(line, character) {
   return { kind: who === 'staff' ? 'staff' : 'person', tag: name(who), text: line.text }
 }
 
+/** オートの待ち時間（09 §9）: 1.2秒＋文字数×0.06秒。段3からは1.5倍 */
+function autoMs(length, rage = 0) {
+  return Math.round((1200 + length * 60) * (rage >= 3 ? 1.5 : 1))
+}
+
 /** 選択肢の上に残す直前の1行: 「イツキ「…」」の形。地の文なら文だけ */
 function quoteLine(box) {
   if (box.kind === 'narration') return box.text
   return `${box.kind === 'player' ? 'あなた' : box.tag}「${box.text}」`
 }
 
-return { sayBox, quoteLine }
+return { sayBox, autoMs, quoteLine }
 })()
 // ---- js/views/face.js
 __modules["js/views/face.js"] = (() => {
@@ -3160,11 +3180,14 @@ __modules["js/views/face.js"] = (() => {
 const { FACE_IDS, backgroundArt, characterArt, characterParts } = __modules["js/art/index.js"]
 const { BLINK_MS, TALK_STEP_MS, blinkGap, talkFrame, talkMs } = __modules["js/art/motion.js"]
 const { art, artNode, characterAvatar, h, speakerName } = __modules["js/ui.js"]
-const { quoteLine, sayBox } = __modules["js/say.js"]
-const { buzz, holdTaps, waitTap } = __modules["js/wait.js"]
+const { autoMs, quoteLine, sayBox } = __modules["js/say.js"]
+const { buzz, holdTaps, skipWaits, wait, waitTap } = __modules["js/wait.js"]
 const { createPanel } = __modules["js/views/panel.js"]
 
-function createFaceView({ character, scene }) {
+/**
+ * prefs（会う場面の設定。この端末に覚える。09 §9）: { auto, hinted, save(patch) }。同じ物を場面をまたいで使う
+ */
+function createFaceView({ character, scene, prefs = { auto: false, hinted: true, save() {} } }) {
   const background = backgroundArt(scene.background)
   // 動きは中の入れ物に（.stage-figure は transform で真ん中に置いている）: ゆれ ＞ 呼吸 ＞ 表情の絵と部品
   const body = h('div', { class: 'stage-body' })
@@ -3186,7 +3209,22 @@ function createFaceView({ character, scene }) {
   const logButton = h('button', { class: 'say-log-btn', type: 'button', onClick: () => openLog(true) }, 'ログ')
   const slot = h('div', { class: 'say-slot', 'aria-live': 'polite' }) // 下の枠: いちばん新しい1つ・選択肢・終わり
   const panel = createPanel()
-  const el = h('section', { class: 'view face' }, stage, logButton, slot, logView)
+  // オート: 押さなくても文の長さで進む。もう一度押すと止まる
+  const autoButton = h('button', { class: 'say-auto-btn', type: 'button', 'aria-pressed': String(prefs.auto), onClick: () => {
+    prefs.auto = !prefs.auto
+    prefs.save({ auto: prefs.auto })
+    autoButton.setAttribute('aria-pressed', String(prefs.auto))
+    if (prefs.auto) skipWaits() // 押すのを待っていたら、すぐ次へ
+  } }, 'オート')
+  const el = h('section', { class: 'view face' }, stage, h('div', { class: 'say-tools' }, autoButton, logButton), slot, logView)
+  // 最初の会う場面で一度だけ「画面のどこを押しても次へ」（3秒ほどで消える）
+  if (!prefs.hinted) {
+    prefs.hinted = true
+    prefs.save({ hinted: true })
+    const hint = h('p', { class: 'say-hint', role: 'status', text: '画面のどこを押しても次へ' })
+    el.append(hint)
+    setTimeout(() => hint.remove(), 3200)
+  }
   holdTaps(false)
 
   /** 豹変の段（09 §4）: 行の rage（0〜5）で変え、次に rage のある行まで続く。影・包丁は、はじめて 1 以上になった時に足す */
@@ -3267,6 +3305,14 @@ function createFaceView({ character, scene }) {
   let lastWho = null // 同じ人が続くときは名前を省く
   let last = null // 下の枠に出している1つ（選択肢の上に残す）
   let started = false // 場面の最初の1つは、押すのを待たずに出す
+  let shown = 0 // 下の枠に出している文の字数（オートの待ち時間）
+
+  /** 次へ進むのを待つ: 押すまで。オートなら文の長さの分（押せば早送り）。ログを開いている間は進まない */
+  async function advance() {
+    if (prefs.auto) await wait(autoMs(shown, rage))
+    else await waitTap()
+    while (!logView.hidden) await waitTap()
+  }
 
   // 部品の絵は、そのキャラの分を先に読んでおく（1人約15KB）
   for (const id of FACE_IDS) for (const part of Object.values(characterParts(character, id) ?? {})) new Image().src = part.image
@@ -3343,6 +3389,7 @@ function createFaceView({ character, scene }) {
 
   function showBox(box) {
     last = box
+    shown = box.text.length
     slot.replaceChildren(h('div', { class: `say-box is-${box.kind}` },
       box.tag ? h('span', { class: 'say-tag', text: box.tag }) : null,
       h('p', { class: 'say-text', text: box.text }),
@@ -3351,7 +3398,7 @@ function createFaceView({ character, scene }) {
   }
 
   async function say(line) {
-    if (started) await waitTap()
+    if (started) await advance()
     started = true
     const who = line.who ?? character.id
     if (line.face) setFace(line.face) // 地の文でも、face があれば表情だけ変える
@@ -3393,8 +3440,9 @@ function createFaceView({ character, scene }) {
     reaction: (line) => say(line), // 黙っている間（delay: "long"）も、押して進む
     noReply: async () => {}, // 次の相手のセリフが、押すのを待つ
     exit: (line) => say(line),
+    advance,
     async showEnd(label) {
-      await waitTap()
+      await advance()
       log.append(h('p', { class: 'say-end', text: '会話が終わりました' }))
       scrollDown()
       slot.replaceChildren(h('p', { class: 'say-quote say-end-note', text: '会話が終わりました' }), panel.el)
@@ -3416,7 +3464,7 @@ const { createFaceView } = __modules["js/views/face.js"]
 
 const LABEL_MS = 1600 // 場面の札を出しておく長さ（1〜2秒。タップで飛ばせる）
 
-function createConversation({ episode, character }) {
+function createConversation({ episode, character }, prefs) {
   const el = h('section', { class: 'screen conversation' })
   // 待っている間は、どこをタップしても早送り（ボタンの上は除く）
   el.addEventListener('click', (event) => {
@@ -3438,7 +3486,7 @@ function createConversation({ episode, character }) {
 
       let view
       if (scene.mode === 'face') {
-        view = createFaceView({ character, scene })
+        view = createFaceView({ character, scene, prefs })
       } else {
         chat ??= createChatView({ episode, character })
         chat.startScene(scene)
@@ -3460,7 +3508,7 @@ function createConversation({ episode, character }) {
 
     /** BAD END（09 §4）: 最後のセリフのあと、押すと白く光って暗転「――。」。もう一度押すと次へ（?fast=1 では自動） */
     async badEnd() {
-      await waitTap() // 最後のセリフを読んでから
+      await (current.advance ?? waitTap)() // 最後のセリフを読んでから（オートなら、その長さの分）
       // 斬る線 → 光る → 暗転（09 §4.1）
       for (const node of el.querySelectorAll('.rage-words, .say-slot')) node.replaceChildren()
       el.append(h('div', { class: 'cut-slash' }))
@@ -3473,7 +3521,7 @@ function createConversation({ episode, character }) {
       void black.offsetWidth // 足してすぐ on にしても、ふわっと暗くなるように
       black.classList.add('on')
       await wait(700)
-      await waitTap()
+      await (current.advance ?? waitTap)()
     },
 
     /** 会話が終わったあと、結果（ギャップ推理の話なら推理）へのボタンを出して押されるまで待つ */
@@ -3781,7 +3829,8 @@ const { bestChoice, evaluationOf, rankFor, scenesOf } = __modules["js/rules.js"]
 const { card, characterAvatar, copyBlock, h, speakerName, stars, tierBadge } = __modules["js/ui.js"]
 
 const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮'
-const stepNumber = (id) => CIRCLED[id - 1] ?? `${id}.`
+// 最後のチャンスの手（09 §6.1）は「②+」
+const stepNumber = (id) => (String(id).endsWith('+') ? `${stepNumber(parseInt(id, 10))}+` : CIRCLED[id - 1] ?? `${id}.`)
 const STAR_LABELS = { 1: '余裕あり', 2: 'ふつう', 3: '余裕なし' } // 心の余裕（設計書 §3.3）
 
 /**
@@ -4308,7 +4357,9 @@ function showIntro(entry, source) {
 
 async function startConversation(entry, source) {
   session = { source, entry, startedAt: Date.now() }
-  const conversation = createConversation(entry)
+  // 会う場面の設定（09 §9）: オート・「どこを押しても次へ」の注を出したか。この端末に覚える
+  const meet = store.page('meet')
+  const conversation = createConversation(entry, { auto: Boolean(meet.auto), hinted: Boolean(meet.hinted), save: (patch) => store.savePage('meet', patch) })
   show(conversation.el)
   session.play = await runEpisode({
     ...entry,
