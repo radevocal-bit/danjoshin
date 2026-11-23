@@ -198,6 +198,7 @@ const CLOTHES_COLORS = {
   beige: '#E1D1B5',
   pink: '#F0B8C5',
   green: '#9EC5A3',
+  cream: '#F3EAD6', // シオリ（09 §8）
 }
 
 // 表情 = 目・眉・口・頬の組み合わせ（06 §5.3）。「作り笑い」は口だけ笑って目は笑わない
@@ -340,6 +341,7 @@ const HAIR = {
     ],
   },
 }
+HAIR.long_straight = HAIR.long // まっすぐの長い髪は、長い髪の絵で（シオリ。絵が届くまでの仮）
 
 const BODY = 'M26 224C28 183 55 163 100 161C145 163 172 183 174 224Z'
 const BODY_BROAD = 'M18 224C21 181 52 160 100 158C148 160 179 181 182 224Z' // build: broad
@@ -391,6 +393,7 @@ const CLOTHES = {
     over: `<path d="M87 161Q100 174 113 161Z" fill="${SKIN_DEEP}"/>`,
   }),
 }
+CLOTHES.knit = CLOTHES.cardigan // ニットは、カーディガンの絵で（シオリ。絵が届くまでの仮）
 
 const CROPS = {
   bust: '0 0 200 224',
@@ -549,7 +552,9 @@ __modules["js/art/index.js"] = (() => {
 const { BACKGROUNDS, backgroundSvg } = __modules["js/art/backgrounds.js"]
 const { FACES, characterSvg, lookProblems } = __modules["js/art/character.js"]
 
-const FACE_IDS = Object.keys(FACES)
+/** 危ない相手の表情（09 §7）。絵がない時・SVG の絵では、近い表情で出す */
+const FACE_FALLBACK = { hollow_smile: 'forced_smile', blank: 'look_away', wide_eyes: 'troubled', manic_smile: 'smile' }
+const FACE_IDS = Object.keys(FACES) // 描ける表情（置きかえる表情は入れない）
 const BACKGROUND_IDS = Object.keys(BACKGROUNDS)
 
 let images = { characters: {}, backgrounds: {}, parts: {} }
@@ -565,6 +570,8 @@ function setArtImages(manifest) {
 }
 
 const PART_NAMES = ['blink', 'talk1', 'talk2']
+/** 実際に描く表情: その表情の絵がなければ、置きかえの表情 */
+const drawnFace = (character, face) => (images.characters[character.id]?.[face] || !FACE_FALLBACK[face] ? face : FACE_FALLBACK[face])
 const ART_SIZE = [400, 448] // キャラの絵の大きさ（部品の位置の元）
 const percent = (value, size) => Math.round((value / size) * 10000) / 100
 
@@ -572,7 +579,8 @@ const percent = (value, size) => Math.round((value / size) * 10000) / 100
  * その表情の動きの部品 → { blink?, talk1?, talk2? }（どれも { image, box: { left, top, width, height }（キャラの絵に対する %）} ）。
  * 部品がなければ null
  */
-function characterParts(character, face = 'normal') {
+function characterParts(character, wanted = 'normal') {
+  const face = drawnFace(character, wanted)
   const boxes = images.parts[character.id]?.[face]
   if (!boxes) return null
   const parts = {}
@@ -604,7 +612,8 @@ function faceCrop(character) {
 }
 
 /** キャラの絵 → { image } か { svg }。look も画像もなければ null（文字アイコンにする） */
-function characterArt(character, face = 'normal', crop = 'bust') {
+function characterArt(character, wanted = 'normal', crop = 'bust') {
+  const face = drawnFace(character, wanted)
   const image = images.characters[character.id]?.[face]
   if (image) return { image }
   if (!character.look) return null
@@ -622,7 +631,7 @@ function backgroundArt(id) {
   return drawn.front && BACKGROUNDS[id] ? { image, front: drawn.front } : { image }
 }
 
-return { FACE_IDS, BACKGROUND_IDS, lookProblems, setArtImages, characterParts, faceCrop, characterArt, backgroundArt }
+return { FACE_FALLBACK, FACE_IDS, BACKGROUND_IDS, lookProblems, setArtImages, characterParts, faceCrop, characterArt, backgroundArt }
 })()
 // ---- js/store.js
 __modules["js/store.js"] = (() => {
@@ -688,6 +697,7 @@ function createStore(storage) {
   const seriesKeyOf = (series) => `${PREFIX}${series}`
   const playerKey = `${PREFIX}player`
   const pagesKey = `${PREFIX}pages`
+  const badEndsKey = (episodeId) => `${PREFIX}badends:${episodeId}`
 
   function readJSON(key) {
     try {
@@ -787,6 +797,19 @@ function createStore(storage) {
       if (perfect) record.perfect += 1
       writeJSON(seriesKeyOf(series), record)
       return { guessed: record.guessed, perfect: record.perfect }
+    },
+
+    /** 危ない相手の話で見た BAD END の id の一覧（09 §5） */
+    badEnds(episodeId) {
+      return readJSON(badEndsKey(episodeId)) ?? []
+    },
+
+    /** BAD END を見た。見た一覧を返す */
+    seeBadEnd(episodeId, id) {
+      const seen = this.badEnds(episodeId)
+      if (!seen.includes(id)) seen.push(id)
+      writeJSON(badEndsKey(episodeId), seen)
+      return seen
     },
 
     /** プレイヤーの設定: { gender: 'male' | 'female' | 'none' } */
@@ -943,7 +966,7 @@ const NO_SERIES = { plays: 0, best: null, met: [], guessed: 0, perfect: 0 }
  * ホームの人の一覧（08 §8）。関係（categories.json の順）ごとに、固定の人の話がある人と、お話のカード。段階の鍵はかけない（続きの話の鍵は残す）
  * → [{ category, label, people: [{ id, character, cards, tiers, title, more }], stories }]（people も stories もない関係は入れない）
  */
-function homePeople({ categories, entries, playerGender, recordOf, seriesRecordOf = () => NO_SERIES }) {
+function homePeople({ categories, entries, playerGender, recordOf, seriesRecordOf = () => NO_SERIES, badEndsOf = () => [] }) {
   const byId = new Map(entries.filter((entry) => entry.episode).map((entry) => [entry.episode.id, entry]))
   const cardOf = (entry) => entryCard(entry, { playerGender, recordOf, seriesRecordOf, byId, lockOf: () => null })
   return categories.categories.map((category) => {
@@ -957,9 +980,19 @@ function homePeople({ categories, entries, playerGender, recordOf, seriesRecordO
     for (const person of people) {
       const tiers = new Set(person.cards.map((card) => tagsOf(card.entry).tier ?? 'beginner'))
       Object.assign(person, { tiers: Object.keys(TIERS).filter((tier) => tiers.has(tier)).map((tier) => TIERS[tier]), title: person.cards[0].episode.title, more: person.cards.length - 1 })
+      // 危ない相手（09 §3）: 見た BAD END の数
+      const danger = person.cards.find((card) => card.episode.bad_ends)
+      if (danger) person.badEnd = badEndCount(danger.episode, badEndsOf(danger.episode.id))
     }
     return { category, label: category.label, people, stories: shown.filter((entry) => entry.story).map(cardOf) }
   }).filter((group) => group.people.length || group.stories.length)
+}
+
+/** 危ない相手の話で見た BAD END の数（09 §3・§5）: 「BAD END 1/4」。1つも見ていなければ「BAD END ?/4」 */
+function badEndCount(episode, seen = []) {
+  const ids = Object.keys(episode.bad_ends ?? {})
+  const count = seen.filter((id) => ids.includes(id)).length
+  return `BAD END ${count || '?'}/${ids.length}`
 }
 
 /** ホームの関係の見出しの横の数（08 §8）: 「8人」「3人＋お話1」 */
@@ -1164,12 +1197,12 @@ function freeCard({ id, entry, pairing, total, record, tier = 'beginner', lockTe
   }
 }
 
-return { TIERS, TIER_NOTES, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homePeople, groupCount, personTitle, freePicker, homeTiles, omakaseCard, categoryPage, recordLine }
+return { TIERS, TIER_NOTES, GENDERS, PAIRINGS, PARTNER_GENDERS, pairingOf, genderOf, spotKey, seriesOf, UNLOCK_RANK, unlockRank, freeSpots, spotLabel, freeGenderOf, resolveFree, homePeople, badEndCount, groupCount, personTitle, freePicker, homeTiles, omakaseCard, categoryPage, recordLine }
 })()
 // ---- js/build-info.js
 __modules["js/build-info.js"] = (() => {
 // 組み立て（npm run build）で書きかわる。npm start で直に動かすときは null（content/ を1つずつ読む）
-const BUNDLE = "content/bundle.json?v=1566448105"
+const BUNDLE = "content/bundle.json?v=b43c3ad6e7"
 
 return { BUNDLE }
 })()
@@ -1891,6 +1924,8 @@ function validateEpisode({ episode, character }, { rules, types, backgrounds = n
     if (line.face && !faces.includes(line.face)) problem(where, `face「${line.face}」が rules.json の faces にない`)
     if (mode === 'face' && line.who === character.id && !line.face) problem(where, `「${line.text}」に表情（face）がない`)
     if (line.delay && line.delay !== 'long') problem(where, `delay「${line.delay}」は long だけ`)
+    if ('rage' in line && !(Number.isInteger(line.rage) && line.rage >= 0 && line.rage <= 5)) problem(where, `rage「${line.rage}」は 0〜5`)
+    if ('spill' in line && !(typeof line.spill === 'string' && line.spill && line.rage === 4)) problem(where, `spill「${line.spill}」は、rage: 4 の行に言葉を書く`)
   }
 
   /** 1手の中身の点検。同性・異性で入れかわる手は、入れかえたあとの手もこれで点検する */
@@ -1929,6 +1964,7 @@ function validateEpisode({ episode, character }, { rules, types, backgrounds = n
         if (!choice.inner) problem(here, 'inner（心の声）がない')
       }
       for (const line of choice.reaction ?? []) checkLine(line, `${here} reaction`, mode)
+      if (choice.bad_end && !episode.bad_ends?.[choice.bad_end]) problem(here, `bad_end「${choice.bad_end}」が bad_ends にない`)
       for (const axis of Object.keys(choice.leans ?? {})) {
         if (!types.axes[axis]) problem(here, `leans の軸 ${axis} が types.json にない`)
       }
@@ -2004,6 +2040,17 @@ function validateEpisode({ episode, character }, { rules, types, backgrounds = n
   }
 
   for (const line of episode.exit ?? []) checkLine(line, ' exit', null)
+
+  // 危ない相手の BAD END（09 §6）
+  const badEnds = Object.entries(episode.bad_ends ?? {})
+  if (episode.bad_end_on_zero && !episode.bad_ends?.[episode.bad_end_on_zero]) problem('', `bad_end_on_zero「${episode.bad_end_on_zero}」が bad_ends にない`)
+  if (badEnds.map(([, item]) => item.no).sort((a, b) => a - b).some((no, i) => no !== i + 1)) problem('', 'bad_ends の no が 1 からの続き番号でない')
+  const spoken = new Set(scenesOf(episode).flatMap((scene) => [...(scene.opening ?? []), ...(scene.opening_if_rough ?? []), ...(scene.steps ?? []).flatMap((step) => [...(step.partner ?? []), ...(step.partner_after_miss ?? [])])]).map((line) => line.text ?? line))
+  for (const [id, item] of badEnds) {
+    if (item.sign?.line && ![...spoken].some((text) => text.includes(item.sign.line))) problem(` BAD END ${id}`, `sign.line「${item.sign.line}」がセリフにない`)
+    if (!item.lines?.length) problem(` BAD END ${id}`, 'lines がない')
+    for (const line of item.lines ?? []) checkLine(line, ` BAD END ${id}`, 'face')
+  }
   return [...new Set(problems)]
 }
 
@@ -2594,8 +2641,9 @@ const { applyDeduction, deductionFor, endReasonFor, isMiss, openingFor, scenesOf
  * view が持つもの:
  *   partner(line, step) / choose(choices, step) → 選んだ choice / player(choice, step)
  *   reaction(line, step) / noReply(step) / exit(line)
+ * 危ない相手（09 §6）: 返事の bad_end か、0点で終わる時の bad_end_on_zero で、その BAD END の行を出して終わる（exit は出さない）
  * pairing: プレイヤーと相手が 'same' / 'opposite'。答えないなら null（入れかわる手は元の手のまま）
- * 返すもの: { episodeId, score, endReason,
+ * 返すもの: { episodeId, score, endReason, badEnd（BAD END の id か null）,
  *            scenes: [{ scene, rough }],
  *            steps: [{ step（実際に出た手）, variant, scene, afterMiss, lines, cues, choice, points, score }] }
  */
@@ -2607,6 +2655,7 @@ async function runEpisode({ episode, character, rules, director, pairing = null,
   let previous = null // 直前の返事（場面をまたいで続く）
   let previousSceneMisses = null // 最初の場面には前がない
   let endReason = null
+  let badEnd = null
 
   for (const [index, scene] of scenesOf(episode).entries()) {
     const view = await director.enterScene(scene, index)
@@ -2641,20 +2690,21 @@ async function runEpisode({ episode, character, rules, director, pairing = null,
       if (reaction.length === 0) await view.noReply(step)
       for (const line of reaction) await view.reaction(line, step)
 
-      endReason = endReasonFor(choice, score, stars, rules)
+      endReason = choice.bad_end ? 'bad_end' : endReasonFor(choice, score, stars, rules)
+      badEnd = choice.bad_end ?? (endReason === 'zero' ? episode.bad_end_on_zero ?? null : null)
       if (endReason) break
       previous = choice
     }
 
     if (endReason) {
       // 0点などで終わるときは、今の場面の形で exit を出す
-      for (const line of episode.exit ?? []) await view.exit(line)
+      for (const line of badEnd ? episode.bad_ends[badEnd].lines : episode.exit ?? []) await view.exit(line)
       break
     }
     previousSceneMisses = misses
   }
 
-  return { episodeId: episode.id, score, endReason, scenes, steps }
+  return { episodeId: episode.id, score, endReason, badEnd, scenes, steps }
 }
 
 return { runEpisode }
@@ -2853,11 +2903,17 @@ function waitTap() {
   })
 }
 
+/** スマホならブルッとふるえる（09 §4.1）。できない端末・まだ一度も押されていない時は何もしない */
+function buzz(pattern) {
+  if (globalThis.navigator?.userActivation?.hasBeenActive === false) return
+  globalThis.navigator?.vibrate?.(pattern)
+}
+
 function between(min, max) {
   return min + Math.random() * (max - min)
 }
 
-return { setSpeed, wait, holdTaps, skipWaits, waitTap, between }
+return { setSpeed, wait, holdTaps, skipWaits, waitTap, buzz, between }
 })()
 // ---- js/views/panel.js
 __modules["js/views/panel.js"] = (() => {
@@ -3105,7 +3161,7 @@ const { FACE_IDS, backgroundArt, characterArt, characterParts } = __modules["js/
 const { BLINK_MS, TALK_STEP_MS, blinkGap, talkFrame, talkMs } = __modules["js/art/motion.js"]
 const { art, artNode, characterAvatar, h, speakerName } = __modules["js/ui.js"]
 const { quoteLine, sayBox } = __modules["js/say.js"]
-const { holdTaps, waitTap } = __modules["js/wait.js"]
+const { buzz, holdTaps, waitTap } = __modules["js/wait.js"]
 const { createPanel } = __modules["js/views/panel.js"]
 
 function createFaceView({ character, scene }) {
@@ -3113,6 +3169,7 @@ function createFaceView({ character, scene }) {
   // 動きは中の入れ物に（.stage-figure は transform で真ん中に置いている）: ゆれ ＞ 呼吸 ＞ 表情の絵と部品
   const body = h('div', { class: 'stage-body' })
   const figure = h('div', { class: 'stage-figure' }, h('div', { class: 'stage-sway' }, body))
+  const KNIFE = '<svg viewBox="-80 0 340 60" aria-hidden="true"><rect x="-80" y="20" width="84" height="20" rx="6" fill="#2a1d16"/><path d="M0 30 L170 14 Q230 22 258 30 Q230 38 170 46 L0 46 Z" fill="#dfe4e8"/><path d="M0 14 L170 14 Q230 22 258 30 L0 30 Z" fill="#fff"/></svg>'
   const stage = h('div', { class: 'stage' },
     background.image
       ? artNode(background, 'stage-layer')
@@ -3131,6 +3188,70 @@ function createFaceView({ character, scene }) {
   const panel = createPanel()
   const el = h('section', { class: 'view face' }, stage, logButton, slot, logView)
   holdTaps(false)
+
+  /** 豹変の段（09 §4）: 行の rage（0〜5）で変え、次に rage のある行まで続く。影・包丁は、はじめて 1 以上になった時に足す */
+  let raged = false
+  let rage = 0
+  let words = null // 段4で画面じゅうに増える言葉
+  let sub = null // 段3から一瞬だけ割りこむ大写しの顔
+  let timers = [] // 1文字ずつ・割りこみ・増える言葉の予定（次の行で消す）
+  const later = (fn, ms) => timers.push(setTimeout(fn, ms))
+  const replay = (node) => {
+    node.classList.remove('go')
+    void node.offsetWidth
+    node.classList.add('go')
+  }
+  function setRage(level) {
+    if (level > 0 && !raged) {
+      raged = true
+      figure.append(h('div', { class: 'rage-eyes' }))
+      words = h('div', { class: 'rage-words', 'aria-hidden': 'true' })
+      sub = h('div', { class: 'rage-sub', 'aria-hidden': 'true' })
+      stage.after(h('div', { class: 'rage-shade rage-vig' }), h('div', { class: 'rage-shade rage-red' }), h('div', { class: 'rage-knife' }, art(KNIFE)), words, sub)
+    }
+    // 段5に入った瞬間: 白く光り、顔が目の前まで迫る。スマホならふるえる（09 §4.1）
+    if (level === 5 && rage !== 5) {
+      el.append(h('div', { class: 'cut-flash' }))
+      buzz([60, 40, 180])
+    }
+    rage = level
+    for (let n = 1; n <= 5; n++) el.classList.toggle(`rage-${n}`, n === level)
+  }
+
+  /** 段3からの1行ごとの演出（09 §4.1）: 1文字ずつ変な間で出す・大写しの顔の割りこみ・段4の spill */
+  function rageLine(line) {
+    for (const timer of timers) clearTimeout(timer)
+    timers = []
+    if (rage !== 4) words?.replaceChildren()
+    if (rage < 3) return
+    const text = slot.querySelector('.say-text')
+    if (text) {
+      text.textContent = ''
+      text.classList.add('typing')
+      let at = 0
+      ;[...line.text].forEach((ch, k) => {
+        at += rage >= 4 ? 35 + Math.random() * 40 : 70 + Math.random() * (k % 6 === 5 ? 380 : 60)
+        later(() => {
+          text.textContent += ch
+          if (k === line.text.length - 1) text.classList.remove('typing')
+        }, at)
+      })
+    }
+    later(() => {
+      const face = rage >= 4 ? 'manic_smile' : 'annoyed'
+      const picture = characterArt(character, face)
+      // 絵（webp）は見本の大写し（高さ 290%）。仮の SVG は顔のまわりの絵を画面いっぱいに
+      sub.replaceChildren((picture?.image ? artNode(picture, 'rage-sub-art') : artNode(characterArt(character, face, 'head'), 'rage-sub-head')) ?? '')
+      replay(sub)
+    }, 500 + Math.random() * 600)
+    if (rage === 4 && line.spill) {
+      for (let k = 0; k < 26; k++) later(() => {
+        const word = h('span', { text: line.spill })
+        word.style.cssText = `left:${Math.random() * 90 - 10}%;top:${Math.random() * 85}%;font-size:${14 + Math.random() * 34}px;rotate:${Math.random() * 40 - 20}deg`
+        words.append(word)
+      }, 120 + k * (90 - k))
+    }
+  }
 
   /** ログを開く（いちばん下まで送る）・閉じる。開いている間は、押しても話は進まない */
   function openLog(on) {
@@ -3222,7 +3343,7 @@ function createFaceView({ character, scene }) {
 
   function showBox(box) {
     last = box
-    slot.replaceChildren(h('div', { class: `say-box ${box.kind}` },
+    slot.replaceChildren(h('div', { class: `say-box is-${box.kind}` },
       box.tag ? h('span', { class: 'say-tag', text: box.tag }) : null,
       h('p', { class: 'say-text', text: box.text }),
       h('span', { class: 'say-next', 'aria-hidden': 'true', text: '▼' }),
@@ -3234,11 +3355,13 @@ function createFaceView({ character, scene }) {
     started = true
     const who = line.who ?? character.id
     if (line.face) setFace(line.face) // 地の文でも、face があれば表情だけ変える
+    if ('rage' in line) setRage(line.rage)
     log.append(lineNode(who, line.text))
     if (who === character.id) talk(line.text.length) // 地の文・店員さんのセリフでは、口は動かさない
     else stopTalk()
     lastWho = who === 'narration' ? null : who
     showBox(sayBox(line, character))
+    if (raged) rageLine(line)
     scrollDown()
   }
 
@@ -3287,7 +3410,7 @@ __modules["js/views/conversation.js"] = (() => {
 // S4 会話の入れ物（06 §4）。場面ごとに、メッセージの画面と会う場面を切り替え、場面の札を出す。
 
 const { h } = __modules["js/ui.js"]
-const { skipWaits, wait } = __modules["js/wait.js"]
+const { buzz, skipWaits, wait, waitTap } = __modules["js/wait.js"]
 const { createChatView } = __modules["js/views/chat.js"]
 const { createFaceView } = __modules["js/views/face.js"]
 
@@ -3333,6 +3456,24 @@ function createConversation({ episode, character }) {
         setTimeout(() => sceneCard.remove(), 400)
       }
       return view
+    },
+
+    /** BAD END（09 §4）: 最後のセリフのあと、押すと白く光って暗転「――。」。もう一度押すと次へ（?fast=1 では自動） */
+    async badEnd() {
+      await waitTap() // 最後のセリフを読んでから
+      // 斬る線 → 光る → 暗転（09 §4.1）
+      for (const node of el.querySelectorAll('.rage-words, .say-slot')) node.replaceChildren()
+      el.append(h('div', { class: 'cut-slash' }))
+      buzz(300)
+      await wait(230)
+      el.append(h('div', { class: 'cut-flash' }))
+      await wait(350)
+      const black = h('div', { class: 'cut-black' }, h('p', { class: 'cut-dots', text: '――。' }))
+      el.append(black)
+      void black.offsetWidth // 足してすぐ on にしても、ふわっと暗くなるように
+      black.classList.add('on')
+      await wait(700)
+      await waitTap()
     },
 
     /** 会話が終わったあと、結果（ギャップ推理の話なら推理）へのボタンを出して押されるまで待つ */
@@ -3438,9 +3579,9 @@ const EMPTY = {
 }
 
 /** S2 ホーム（08 §8）: 「だれと話す？」の下に、人の顔を関係ごとに3列で。お話はその関係の下に横いっぱい。腕だめし（毎回初見）は頭のすぐ下（08 §9） */
-function homeScreen({ categories, entries, playerGender, recordOf, seriesRecordOf, free, trial = {}, onOpen, onPerson, onTrial, onTrialStart, onChangeGender }) {
+function homeScreen({ categories, entries, playerGender, recordOf, seriesRecordOf, badEndsOf, free, trial = {}, onOpen, onPerson, onTrial, onTrialStart, onChangeGender }) {
   const picker = freePicker({ categories, free, category: trial.category, tier: trial.tier, seriesRecordOf })
-  const groups = homePeople({ categories, entries, playerGender, recordOf, seriesRecordOf })
+  const groups = homePeople({ categories, entries, playerGender, recordOf, seriesRecordOf, badEndsOf })
 
   return h('section', { class: 'screen home' },
     h('header', { class: 'home-head' },
@@ -3454,7 +3595,7 @@ function homeScreen({ categories, entries, playerGender, recordOf, seriesRecordO
     h('h2', { class: 'home-heading', text: 'だれと話す？' }),
     h('p', { class: 'fine home-lead', text: '話したい人を選んでね。相手のタイプはひみつ。初級はメッセージのやり取りだけ。中級・上級は会って話す。' }),
     groups.map((group) => [
-      h('div', { class: 'home-sec' }, h('h3', { text: group.label }), h('span', { text: groupCount(group) })),
+      h('div', { class: 'home-sec' }, h('h3', { text: group.label }), h('span', { text: groupCount(group) }), group.category.note ? h('span', { class: 'home-sec-note', text: group.category.note }) : null),
       h('div', { class: 'people' },
         group.people.map((person) => personNode(person, onPerson)),
         group.stories.map((c) => storyNode(c, onOpen)),
@@ -3509,7 +3650,7 @@ const personNode = (person, onPerson) => h('button', { class: 'person', type: 'b
   h('span', { class: 'person-body' },
     h('span', { class: 'person-name', text: person.character.name }),
     h('span', { class: 'person-title', text: personTitle(person) }),
-    h('span', { class: 'person-tiers' }, person.tiers.map((label) => tierBadge(TIER_IDS[label], label))),
+    h('span', { class: 'person-tiers' }, person.tiers.map((label) => tierBadge(TIER_IDS[label], label)), person.badEnd ? h('span', { class: 'badge person-badend', text: person.badEnd }) : null),
   ),
 )
 
@@ -3851,6 +3992,31 @@ function innerVoice(label, text) {
 
 return { resultScreen, cueLineOf }
 })()
+// ---- js/screens/badend.js
+__modules["js/screens/badend.js"] = (() => {
+// BAD END の画面（09 §5）: 黒地に赤い「BAD END」・No.n「題」・見のがしたサイン・やり直す／解説を見る／ホームにもどる
+
+const { h } = __modules["js/ui.js"]
+
+/** count: 「BAD END m/N」の行（見た数がまだわからなければ ?） */
+function badEndScreen({ episode, badEnd, count, onRetry, onResult, onHome, homeLabel = 'ホームにもどる' }) {
+  const item = episode.bad_ends[badEnd]
+  const button = (label, onClick) => h('button', { class: 'badend-btn', type: 'button', onClick }, label)
+  return h('section', { class: 'screen badend' },
+    h('p', { class: 'badend-title', text: 'BAD END' }),
+    h('p', { class: 'badend-no', text: `No.${item.no}「${item.title}」` }),
+    h('div', { class: 'badend-sign' },
+      h('p', { class: 'badend-sign-label', text: '見のがしたサイン' }),
+      h('p', { class: 'badend-sign-line', text: item.sign.line }),
+      h('p', { text: item.sign.text }),
+    ),
+    h('div', { class: 'badend-btns' }, button('やり直す', onRetry), button('解説を見る', onResult), button(homeLabel, onHome)),
+    h('p', { class: 'badend-count', text: count }),
+  )
+}
+
+return { badEndScreen }
+})()
 // ---- js/screens/start.js
 __modules["js/screens/start.js"] = (() => {
 // S0 タイトル / S1 遊び方 / S1.5 あなたは？ / S3 紹介
@@ -3915,6 +4081,7 @@ function introScreen({ episode, character, tierLabel, onStart, onBack, backLabel
     h('p', { class: 'intro-tier' }, tierBadge(episode.tier, tierLabel)),
     h('div', { class: 'intro-card' },
       h('p', { class: 'intro-title', text: episode.title }),
+      episode.warning ? h('p', { class: 'intro-warning', text: episode.warning }) : null,
       h('p', { class: 'intro-text', text: episode.intro }),
     ),
     h('button', { class: 'btn btn-primary', type: 'button', onClick: onStart }, '会話をはじめる'),
@@ -3931,7 +4098,7 @@ __modules["js/main.js"] = (() => {
 //   → S3 紹介 → S4 会話（場面ごと）→ S5 推理（続きの話のギャップ推理だけ）→ S6 結果
 
 const { BACKGROUND_IDS, lookProblems, setArtImages } = __modules["js/art/index.js"]
-const { TIERS, homePeople, pairingOf, resolveFree, seriesOf, spotLabel, unlockRank } = __modules["js/catalog.js"]
+const { TIERS, badEndCount, homePeople, pairingOf, resolveFree, seriesOf, spotLabel, unlockRank } = __modules["js/catalog.js"]
 const { loadGame, validateCategories, validateEpisode, validateFree, validateStory } = __modules["js/data.js"]
 const { assembleFree, freeLessons, freeTiers } = __modules["js/free.js"]
 const { buildReport } = __modules["js/report.js"]
@@ -3944,6 +4111,7 @@ const { createConversation } = __modules["js/views/conversation.js"]
 const { afterConversation, guessScreen } = __modules["js/screens/guess.js"]
 const { categoryScreen, homeScreen, personScreen } = __modules["js/screens/home.js"]
 const { resultScreen } = __modules["js/screens/result.js"]
+const { badEndScreen } = __modules["js/screens/badend.js"]
 const { genderScreen, howToScreen, introScreen, titleScreen } = __modules["js/screens/start.js"]
 
 const root = document.getElementById('app')
@@ -4034,6 +4202,7 @@ const freeInfo = () => (game.free ? { total: Object.keys(game.free.types).length
 const records = {
   recordOf: (id) => store.read(id),
   seriesRecordOf: (series) => store.readSeries(series),
+  badEndsOf: (id) => store.badEnds(id), // 危ない相手で見た BAD END（09 §3）
 }
 
 /** S2 ホーム「だれと話す？」（08 §8）。人を押すと、話が1つで鍵がなければその話の紹介へ、ほかはその人の話の一覧へ */
@@ -4152,6 +4321,12 @@ async function startConversation(entry, source) {
   const { character, episode } = entry
   const cast = { type: character.type, name: character.name, ...(episode.free ? { topic: episode.free.topic } : {}) }
   session.saved = series ? store.recordSeriesPlay(series, session.play, cast) : store.recordPlay(episode.id, session.play)
+  // 危ない相手の BAD END（09 §4・§5）: 光って暗転してから、BAD END の画面へ
+  if (session.play.badEnd) {
+    await conversation.badEnd()
+    showBadEnd()
+    return
+  }
   // 推理の画面は、続きの話のギャップ推理だけ。ほかは推理を出さずに結果へ（会話のあとのタイプ推理はやめた。04 S4）
   const next = afterConversation(entry.episode)
   await conversation.showEnd(next.label)
@@ -4166,6 +4341,19 @@ async function startConversation(entry, source) {
       session.guess = guess
       showResult()
     },
+  }))
+}
+
+function showBadEnd() {
+  const { episode } = session.entry
+  show(badEndScreen({
+    episode,
+    badEnd: session.play.badEnd,
+    count: badEndCount(episode, store.seeBadEnd(episode.id, session.play.badEnd)), // 見た BAD END を足して数える
+    onRetry: () => startConversation(session.entry, session.source), // 同じ話を最初から
+    onResult: showResult,
+    onHome: showPlace,
+    homeLabel: placeLabel(),
   }))
 }
 
@@ -4202,6 +4390,7 @@ function withLessons(entry, play) {
  * （前の記録の guessed・perfect は、そのまま残す）
  */
 function tallyOf(entry) {
+  if (entry.episode?.bad_ends) return [badEndCount(entry.episode, store.badEnds(entry.episode.id))] // 危ない相手（09 §6）
   const series = seriesOf(entry)
   if (!series) return null
   const met = store.meetType(series, entry.character.type).length
